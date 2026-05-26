@@ -34,12 +34,18 @@ struct NotchView: View {
     /// pill itself.
     var onTap: () -> Void = {}
 
-    /// 0 → 1: how far the border trace has expanded from
-    /// top-centre. Animated when a new activity takes the
-    /// slot. 0 = no border visible, 1 = full perimeter drawn.
-    /// Once drawn (=1) the line stays rendered until the
-    /// activity changes — it doesn't fade out anymore.
-    @State private var borderProgress: Double = 0
+    /// 0 → 1 trace progress for the **contour** half of the
+    /// accent: bottom-centre of the pill, around the rounded
+    /// bottom corner, up the side, through the concave bite.
+    /// Ends at the wing's top corner where the pill meets the
+    /// screen edge.
+    @State private var contourProgress: Double = 0
+    /// 0 → 1 trace progress for the **top-edge** half of the
+    /// accent: from the wing's top corner straight out to the
+    /// screen's left/right edge. Drawn 1pt thicker than the
+    /// contour so half of it being cropped by the device's
+    /// rounded screen bezel still reads as a 2pt line.
+    @State private var topEdgeProgress: Double = 0
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -91,46 +97,74 @@ struct NotchView: View {
     private var screenTopAccent: some View {
         if let a = activity {
             let color = Self.accentColor(for: a)
-            // Two-branch trace that grows symmetrically from
-            // the pill's bottom-centre. Each branch follows
-            // the island's contour: along the bottom edge,
-            // through the rounded bottom corner, up the side,
-            // through the concave bite where the pill meets
-            // the screen, and finally out along the screen's
-            // top edge to the side of the display. Both
-            // branches are trimmed by `borderProgress` so the
-            // outline appears to "draw itself" outward.
+            // Two-stage trace that grows symmetrically from
+            // the pill's bottom-centre.
+            //
+            //   Stage 1 — contour (2pt): along the bottom edge,
+            //   through the rounded bottom corner, up the side,
+            //   through the concave bite where the pill meets
+            //   the screen.
+            //   Stage 2 — top edge (3pt): horizontally from
+            //   the wing's top corner out to the screen edge.
+            //
+            // The top edge is rendered 1pt thicker than the
+            // contour because half of it is hidden by the
+            // device's rounded screen bezel — the extra pt
+            // brings the *visible* stroke back up to feel like
+            // it matches the contour width.
+            //
+            // Each stage is its own Shape with its own progress
+            // state, so the two stroke widths can be different.
+            // Stages chain via `triggerBorderTrace`, with the
+            // top edge starting just before the contour finishes
+            // to keep the motion continuous through the wing's
+            // top corner.
             let frame = Geometry.islandFrame(
                 for: a, layout: layout, expanded: isExpanded)
-            let stroke = StrokeStyle(
+            let contourStroke = StrokeStyle(
                 lineWidth: 2,
                 lineCap: .round,
                 lineJoin: .round)
+            let topEdgeStroke = StrokeStyle(
+                lineWidth: 3,
+                lineCap: .round)
             ZStack {
-                ScreenAccentTrace(
+                ScreenAccentContour(
                     side: .right,
                     islandFrame: frame,
-                    screenWidth: layout.screenWidth,
                     punchRadius: punchRadius,
                     bottomCornerRadius: bottomCornerRadius
                 )
-                .trim(from: 0, to: borderProgress)
-                .stroke(color, style: stroke)
-                ScreenAccentTrace(
+                .trim(from: 0, to: contourProgress)
+                .stroke(color, style: contourStroke)
+                ScreenAccentTopEdge(
+                    side: .right,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth
+                )
+                .trim(from: 0, to: topEdgeProgress)
+                .stroke(color, style: topEdgeStroke)
+                ScreenAccentContour(
                     side: .left,
                     islandFrame: frame,
-                    screenWidth: layout.screenWidth,
                     punchRadius: punchRadius,
                     bottomCornerRadius: bottomCornerRadius
                 )
-                .trim(from: 0, to: borderProgress)
-                .stroke(color, style: stroke)
+                .trim(from: 0, to: contourProgress)
+                .stroke(color, style: contourStroke)
+                ScreenAccentTopEdge(
+                    side: .left,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth
+                )
+                .trim(from: 0, to: topEdgeProgress)
+                .stroke(color, style: topEdgeStroke)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Match the island's hover-expansion spring so the
             // contour morphs in lock-step with the pill rather
-            // than snapping to the new frame. `ScreenAccentTrace`
-            // is `Animatable` on its `islandFrame`, so this
+            // than snapping to the new frame. Both Shape types
+            // are `Animatable` on their geometry, so this
             // animation propagates through to the path
             // coordinates and the trace stretches / contracts
             // alongside the pill body.
@@ -198,22 +232,25 @@ struct NotchView: View {
         .onTapGesture { onTap() }
     }
 
-    /// Kick off the screen-top accent: the trace grows from
-    /// 0 to 1 over ~0.9s and then **stays drawn**. The line
-    /// only disappears when the activity itself goes away (the
-    /// `if let a = activity` guard above strips the view), or
-    /// when the next activity takes the slot and resets the
-    /// progress for its own re-trace.
+    /// Kick off the screen-top accent in two stages. Stage 1
+    /// is the contour around the pill (0.4s ease-out). Stage 2
+    /// is the long horizontal stretch to the screen edges
+    /// (0.55s ease-out). Stage 2 starts ~50ms before stage 1
+    /// finishes so the motion appears continuous through the
+    /// wing's top corner. Once drawn the line **stays
+    /// rendered** — it only disappears when the activity goes
+    /// away or another activity takes the slot.
     private func triggerBorderTrace() {
-        borderProgress = 0
-        // 0.9s feels right: the contour leg (corner + side +
-        // concave bite) is short relative to the horizontal
-        // screen-edge extension, so most of the animation
-        // visually "shoots out" to the screen edges; ease-out
-        // keeps the contour part deliberate before the line
-        // accelerates outward.
-        withAnimation(.easeOut(duration: 0.9)) {
-            borderProgress = 1
+        contourProgress = 0
+        topEdgeProgress = 0
+        withAnimation(.easeOut(duration: 0.4)) {
+            contourProgress = 1
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            withAnimation(.easeOut(duration: 0.55)) {
+                topEdgeProgress = 1
+            }
         }
     }
 
@@ -627,29 +664,33 @@ private struct IslandShape: Shape {
     }
 }
 
-/// One half of the contour-trace accent. Builds the path from
-/// the pill's bottom-centre outward — along the bottom edge,
-/// through the convex bottom corner, up the side, through the
-/// concave bite, and finally along the screen's top edge out to
-/// the screen's left/right edge. Two copies (one per `Side`)
-/// are stacked in `screenTopAccent`, each trimmed by
-/// `borderProgress` so the line appears to draw itself outward
-/// from the centre.
+/// One half of the contour-trace accent — the curvy bit. Builds
+/// the path from the pill's bottom-centre outward, along the
+/// bottom edge, through the convex bottom corner, up the side,
+/// and through the concave bite, ending at the wing's top
+/// corner where the pill meets the screen edge.
+///
+/// `ScreenAccentTopEdge` picks up from there and runs the rest
+/// of the way out to the screen's left/right edge. They're
+/// split into two Shapes because the top edge is stroked 1pt
+/// thicker than the contour — half of it is cropped by the
+/// device's rounded screen bezel, so the extra pt brings the
+/// *visible* line back up to look like the same weight as the
+/// contour.
 ///
 /// All coordinates are in the panel's local space (origin
-/// top-left). The path uses `islandFrame` and `screenWidth`
-/// directly rather than the parent rect, so the parent only
-/// needs to size the shape large enough to contain the panel.
+/// top-left). The path uses `islandFrame` directly rather than
+/// the parent rect, so the parent only needs to size the shape
+/// large enough to contain the panel.
 ///
 /// Arc-direction convention: SwiftUI's `Path.addArc` treats
 /// `clockwise` in the legacy y-up sense, so `clockwise: false`
 /// here produces visually-clockwise short arcs on screen and
 /// vice-versa. Mirrors `IslandShape`.
-private struct ScreenAccentTrace: Shape {
+private struct ScreenAccentContour: Shape {
     enum Side { case left, right }
     var side: Side
     var islandFrame: CGRect
-    var screenWidth: CGFloat
     var punchRadius: CGFloat
     var bottomCornerRadius: CGFloat
 
@@ -718,8 +759,6 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(180),
                 endAngle: .degrees(270),
                 clockwise: false)
-            // Along the screen's top edge to its right side.
-            p.addLine(to: CGPoint(x: screenWidth, y: topY))
 
         case .left:
             // Bottom edge → entry point of the rounded corner.
@@ -747,7 +786,54 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(0),
                 endAngle: .degrees(-90),
                 clockwise: true)
-            // Along the screen's top edge to its left side.
+        }
+        return p
+    }
+}
+
+/// The straight horizontal stretch of the accent — from the
+/// wing's top corner out to the screen's left/right edge.
+/// Drawn 1pt thicker than `ScreenAccentContour` because half
+/// of it gets cropped by the device's rounded screen bezel.
+/// Same `Animatable` interpolation on `islandFrame` so the
+/// line follows the pill cleanly through hover transitions.
+private struct ScreenAccentTopEdge: Shape {
+    enum Side { case left, right }
+    var side: Side
+    var islandFrame: CGRect
+    var screenWidth: CGFloat
+
+    var animatableData:
+        AnimatablePair<
+            AnimatablePair<CGFloat, CGFloat>,
+            AnimatablePair<CGFloat, CGFloat>
+        >
+    {
+        get {
+            AnimatablePair(
+                AnimatablePair(islandFrame.origin.x,
+                               islandFrame.origin.y),
+                AnimatablePair(islandFrame.size.width,
+                               islandFrame.size.height))
+        }
+        set {
+            islandFrame = CGRect(
+                x: newValue.first.first,
+                y: newValue.first.second,
+                width: newValue.second.first,
+                height: newValue.second.second)
+        }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let topY = islandFrame.minY
+        switch side {
+        case .right:
+            p.move(to: CGPoint(x: islandFrame.maxX, y: topY))
+            p.addLine(to: CGPoint(x: screenWidth, y: topY))
+        case .left:
+            p.move(to: CGPoint(x: islandFrame.minX, y: topY))
             p.addLine(to: CGPoint(x: 0, y: topY))
         }
         return p
