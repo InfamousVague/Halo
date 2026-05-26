@@ -116,6 +116,21 @@ final class LiveActivityCoordinator {
         activities = snapshot
     }
 
+    /// User-initiated cycle advance (click on the island).
+    /// Same logic as the timer but ALSO resets the 4s
+    /// auto-cycle clock so the next auto-advance comes a full
+    /// interval after the manual click — feels right when you
+    /// tap-tap-tap to step through.
+    func advanceCycleManually() {
+        advanceCycle()
+        cycleTimer?.invalidate()
+        cycleTimer = Timer.scheduledTimer(
+            withTimeInterval: cycleInterval, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.advanceCycle() }
+        }
+    }
+
     /// Force an immediate re-poll. Used by settings toggles
     /// that change which suite slots are visible — without it
     /// the change waits up to 1s for the next scheduled tick.

@@ -37,6 +37,7 @@ final class NotchHost: NSObject {
         rebuildPanel()
         coordinator.start()
         startPublishers()
+        installHoverMonitor()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
@@ -52,12 +53,62 @@ final class NotchHost: NSObject {
             NotificationCenter.default.removeObserver(o)
             screenObserver = nil
         }
+        uninstallHoverMonitor()
         stopPublishers()
         coordinator.stop()
         panel?.orderOut(nil)
         panel = nil
         hostingController = nil
         currentLayout = nil
+    }
+
+    // MARK: - Hover monitor + per-event mouse capture
+
+    /// Global mouse-moved monitor. We track the cursor and
+    /// flip the panel's `ignoresMouseEvents` based on whether
+    /// it's currently inside the island rect. When inside,
+    /// the panel captures clicks (so the user can tap to
+    /// advance the cycle). When outside, the panel is fully
+    /// click-through so menu-bar items stay reachable.
+    private var hoverMonitor: Any?
+    private var lastInsideIsland = false
+
+    private func installHoverMonitor() {
+        hoverMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .mouseMoved
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshHover() }
+        }
+    }
+
+    private func uninstallHoverMonitor() {
+        if let m = hoverMonitor {
+            NSEvent.removeMonitor(m)
+            hoverMonitor = nil
+        }
+        lastInsideIsland = false
+        panel?.ignoresMouseEvents = true
+    }
+
+    private func refreshHover() {
+        guard let layout = currentLayout,
+              let screen = NSScreen.main,
+              let panel = panel
+        else { return }
+        let cursor = NSEvent.mouseLocation  // screen-space
+        let panelLocal = CGPoint(
+            x: cursor.x - screen.frame.minX,
+            y: screen.frame.maxY - cursor.y)
+        let rect = Geometry.islandFrame(
+            for: coordinator.topActivity, layout: layout)
+            .insetBy(dx: -6, dy: -6)
+        let inside = rect.contains(panelLocal)
+        guard inside != lastInsideIsland else { return }
+        lastInsideIsland = inside
+        // Inside → become clickable so the SwiftUI tap gesture
+        // can fire. Outside → revert to click-through so the
+        // panel never swallows menu-bar items.
+        panel.ignoresMouseEvents = !inside
     }
 
     private func startPublishers() {
@@ -191,7 +242,8 @@ struct NotchHostRoot: View {
         NotchView(
             activity: coordinator.topActivity,
             cycleSlot: coordinator.cycleIndex,
-            layout: layout)
+            layout: layout,
+            onTap: { coordinator.advanceCycleManually() })
     }
 }
 

@@ -25,6 +25,11 @@ struct NotchView: View {
     /// shape stays the same.
     var cycleSlot: Int = 0
     var layout: NotchLayout
+    /// Click-the-pill handler. `NotchHost` flips the panel's
+    /// `ignoresMouseEvents` only when the cursor is inside the
+    /// island so this tap only ever fires from a click ON the
+    /// pill itself.
+    var onTap: () -> Void = {}
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -80,6 +85,11 @@ struct NotchView: View {
         }
         .frame(width: totalWidth, height: totalHeight)
         .position(x: centerX, y: totalHeight / 2)
+        // Capture taps on the entire pill — only fires when the
+        // panel is in capture mode (cursor over the island), so
+        // clicks elsewhere in the menu bar are unaffected.
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
     }
 
 
