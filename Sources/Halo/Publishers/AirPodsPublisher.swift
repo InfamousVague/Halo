@@ -40,6 +40,7 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
     }
 
     func start() {
+        AirPodsDebugLog.append("\(Date()) AirPodsPublisher.start()\n")
         // Lazily create the central — initialising it triggers
         // the OS permission prompt.
         central = CBCentralManager(
@@ -47,6 +48,7 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
             options: [
                 CBCentralManagerOptionShowPowerAlertKey: false,
             ])
+        AirPodsDebugLog.append("\(Date()) created CBCentralManager\n")
         // Sweep stale readings every 5s.
         staleTimer = Timer.scheduledTimer(
             withTimeInterval: 5, repeats: true
@@ -188,26 +190,6 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
 
 extension AirPodsPublisher: CBCentralManagerDelegate {
 
-    nonisolated func centralManagerDidUpdateState(
-        _ central: CBCentralManager
-    ) {
-        let state = central.state
-        Task { @MainActor in
-            guard state == .poweredOn else {
-                NSLog("[halo] AirPods: BLE state = \(state.rawValue) — not scanning")
-                return
-            }
-            // Scan continuously with duplicate keys enabled —
-            // we want every advertisement so we can refresh
-            // battery levels at the broadcast rate.
-            central.scanForPeripherals(
-                withServices: nil,
-                options: [
-                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
-                ])
-        }
-    }
-
     nonisolated func centralManager(
         _ central: CBCentralManager,
         didDiscover peripheral: CBPeripheral,
@@ -217,26 +199,83 @@ extension AirPodsPublisher: CBCentralManagerDelegate {
         guard let data = advertisementData[
             CBAdvertisementDataManufacturerDataKey] as? Data
         else { return }
-        // Cheap pre-filter before we hop to main: must be Apple
-        // proximity-pairing.
-        guard data.count >= 4 else { return }
-        let appleHeader = data.starts(with: [0x4C, 0x00, 0x07])
-            || (data.count >= 17 && data[0] == 0x07)
-        guard appleHeader else { return }
+        // First 2 bytes are the manufacturer ID; only continue
+        // for Apple (0x004C, little-endian = 0x4C 0x00).
+        guard data.count >= 3, data[0] == 0x4C, data[1] == 0x00
+        else { return }
+        // Subtype byte right after the company ID. 0x07 is
+        // proximity-pairing (AirPods/Beats); 0x12 is FindMy,
+        // 0x10 is "nearby info" etc. — we only care about 0x07.
+        guard data[2] == 0x07 else { return }
 
-        // Raw advertisement dump — keeps the publisher
-        // debuggable across firmware revisions. Compare
-        // against the actual L/R/case battery percentages in
-        // Bluetooth Settings to find the right byte offsets.
+        // Raw advertisement dump → /tmp/halo-airpods.log so we
+        // can iterate on byte offsets across firmware versions.
+        // NSLog gets privacy-redacted; a plain file write
+        // gives us visible hex.
         let hex = data.map { String(format: "%02x", $0) }.joined(separator: " ")
-        NSLog("[halo] AirPods raw (\(data.count)b): \(hex) rssi=\(RSSI)")
+        let logLine = "\(Date()) (\(data.count)b) \(hex) rssi=\(RSSI)\n"
+        AirPodsDebugLog.append(logLine)
 
         Task { @MainActor [weak self] in
             guard let self,
                   let reading = self.parseAdvertisement(data)
             else { return }
-            NSLog("[halo] AirPods parsed: L=\(String(describing: reading.left)) R=\(String(describing: reading.right)) case=\(String(describing: reading.caseBattery)) charging=\(reading.charging)")
+            let parsedLine = "  parsed → L=\(String(describing: reading.left)) R=\(String(describing: reading.right)) case=\(String(describing: reading.caseBattery)) charging=\(reading.charging)\n"
+            AirPodsDebugLog.append(parsedLine)
             self.apply(reading: reading)
         }
+    }
+
+    nonisolated func centralManagerDidUpdateState(
+        _ central: CBCentralManager
+    ) {
+        let state = central.state
+        AirPodsDebugLog.append(
+            "\(Date()) BLE state = \(state.rawValue) " +
+            "(poweredOn=5, unauthorized=3, poweredOff=4)\n")
+        Task { @MainActor in
+            guard state == .poweredOn else { return }
+            central.scanForPeripherals(
+                withServices: nil,
+                options: [
+                    CBCentralManagerScanOptionAllowDuplicatesKey: true,
+                ])
+            AirPodsDebugLog.append(
+                "\(Date()) scanForPeripherals started\n")
+        }
+    }
+}
+
+/// Tiny append-only log writer to `/tmp/halo-airpods.log`.
+/// Bypasses NSLog's privacy redaction so we can read raw BLE
+/// bytes when iterating on the parser. Cap the file at 64 KB
+/// so it doesn't grow forever.
+private enum AirPodsDebugLog {
+    nonisolated(unsafe) private static var didTruncate = false
+    private static let path = "/tmp/halo-airpods.log"
+
+    static func append(_ line: String) {
+        if !didTruncate {
+            try? "".write(toFile: path, atomically: true,
+                          encoding: .utf8)
+            didTruncate = true
+        }
+        guard let handle = FileHandle(forWritingAtPath: path),
+              let data = line.data(using: .utf8)
+        else { return }
+        handle.seekToEndOfFile()
+        // Cap at 64 KB; truncate the front if we go over.
+        if handle.offsetInFile > 64_000 {
+            try? handle.close()
+            try? "".write(toFile: path, atomically: true,
+                          encoding: .utf8)
+            if let h2 = FileHandle(forWritingAtPath: path) {
+                try? h2.write(contentsOf: data)
+                try? h2.close()
+            }
+            return
+        }
+        try? handle.write(contentsOf: data)
+        try? handle.close()
     }
 }
