@@ -199,14 +199,16 @@ final class NowPlayingPublisher: HaloPublisher {
         return s.prefix(max - 1) + "…"
     }
 
-    /// Seconds → "M:SS" — same shape Spotify / Music render
-    /// the scrubber labels with, so the compact pill matches
-    /// the source apps' clocks at a glance.
+    /// Seconds → "MM:SS". Both fields are zero-padded so the
+    /// label never changes width — "01:23" → "01:24" rolls
+    /// digit-for-digit through `.contentTransition(.numericText())`
+    /// without the pill having to re-flow when the minute
+    /// crosses a one-/two-digit boundary at 9:59 → 10:00.
     private static func formatTime(_ seconds: Double) -> String {
         let total = max(0, Int(seconds.rounded()))
         let m = total / 60
         let s = total % 60
-        return String(format: "%d:%02d", m, s)
+        return String(format: "%02d:%02d", m, s)
     }
 }
 
