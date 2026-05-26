@@ -69,8 +69,7 @@ final class NotchHost: NSObject {
         if panel == nil {
             let p = NSPanel(
                 contentRect: panelRect,
-                styleMask: [.borderless, .nonactivatingPanel,
-                            .fullSizeContentView],
+                styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
             )
@@ -94,6 +93,10 @@ final class NotchHost: NSObject {
             // without claiming the rest of the menu bar.
             p.ignoresMouseEvents = true
             p.hidesOnDeactivate = false
+            // Don't let AppKit clamp our frame to the screen's
+            // visibleFrame (which excludes the menu-bar band) —
+            // we WANT to draw over the menu-bar area.
+            p.setFrame(panelRect, display: false)
             panel = p
         } else {
             panel?.setFrame(panelRect, display: false, animate: false)

@@ -16,54 +16,35 @@ struct HaloApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        // No window scene — the island is the UI. Empty Settings
-        // scene keeps SwiftUI quiet without spawning a real window.
-        Settings { EmptyView() }
+        // MenuBarExtra gives SwiftUI a concrete scene to render
+        // and reliably bootstraps the AppDelegate adaptor. The
+        // menu is the user's way to open settings + quit; the
+        // island itself is the AppDelegate's NSPanel.
+        MenuBarExtra("Halo", systemImage: "circle.dashed") {
+            Button("Show Settings…") {
+                if let d = NSApp.delegate as? AppDelegate {
+                    d.openSettings()
+                }
+            }
+            Divider()
+            Button("Quit Halo") { NSApp.terminate(nil) }
+        }
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) lazy var notchHost = NotchHost()
-    private var statusItem: NSStatusItem!
-    private var settingsPopover: NSPopover!
+    private var settingsWindow: NSWindow?
+
+    override init() {
+        super.init()
+        NSLog("[halo] AppDelegate init")
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSLog("[halo] applicationDidFinishLaunching — island enabled=\(HaloSettings.enabled)")
         NSApp.setActivationPolicy(.accessory)
-
-        // Menu-bar status item so the user can quit Halo or open
-        // its settings without going through the launcher.
-        statusItem = NSStatusBar.system.statusItem(
-            withLength: NSStatusItem.squareLength)
-        if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "rectangle.dashed.and.paperclip",
-                accessibilityDescription: "Halo")
-            button.image?.isTemplate = true
-            button.action = #selector(toggleSettings(_:))
-            button.target = self
-        }
-
-        // Settings popover — small for now; phase-0 is just an
-        // "Enabled" toggle + "Quit" button. Grows once we add
-        // pane configuration, HUD prefs, etc.
-        settingsPopover = NSPopover()
-        settingsPopover.behavior = .transient
-        settingsPopover.contentViewController = NSHostingController(
-            rootView: SettingsView(
-                onQuit: { NSApp.terminate(nil) },
-                isEnabledBinding: Binding(
-                    get: { [weak self] in
-                        self?.notchHost.isEnabled ?? false
-                    },
-                    set: { [weak self] on in
-                        if on { self?.notchHost.enable() }
-                        else { self?.notchHost.disable() }
-                        HaloSettings.setEnabled(on)
-                    }
-                )
-            )
-        )
 
         // Start the island. The host is idempotent — toggling via
         // settings just calls enable() / disable() again later.
@@ -72,16 +53,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleSettings(_ sender: Any?) {
-        guard let button = statusItem.button else { return }
-        if settingsPopover.isShown {
-            settingsPopover.performClose(sender)
-        } else {
-            settingsPopover.show(
-                relativeTo: button.bounds,
-                of: button,
-                preferredEdge: .minY)
+    /// Show the settings window. Called from the MenuBarExtra
+    /// "Show Settings…" menu item. Uses a real NSWindow so the
+    /// toggle reliably accepts input (NSPopover from a SwiftUI
+    /// menu bar item has activation quirks on macOS 14+).
+    func openSettings() {
+        if let w = settingsWindow {
+            w.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
+        let view = SettingsView(
+            onQuit: { NSApp.terminate(nil) },
+            isEnabledBinding: Binding(
+                get: { [weak self] in
+                    self?.notchHost.isEnabled ?? false
+                },
+                set: { [weak self] on in
+                    if on { self?.notchHost.enable() }
+                    else { self?.notchHost.disable() }
+                    HaloSettings.setEnabled(on)
+                }
+            )
+        )
+        let hc = NSHostingController(rootView: view)
+        let win = NSWindow(contentViewController: hc)
+        win.title = "Halo"
+        win.styleMask = [.titled, .closable]
+        win.isReleasedWhenClosed = false
+        win.center()
+        settingsWindow = win
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
