@@ -61,6 +61,14 @@ struct NotchView: View {
     /// publisher / priority shift (cycleSlot unchanged —
     /// play the trace-in → hold → trace-out animation).
     @State private var lastCycleSlot: Int = 0
+    /// `id → last time it was the displayed activity`. Used
+    /// to suppress the trace when an activity that just lost
+    /// the slot quickly reclaims it (e.g. Espresso coming
+    /// back after a 2.5s Worktree priority boost expires) —
+    /// those aren't *new* arrivals from the user's point of
+    /// view, just priority shuffles, so they shouldn't flash
+    /// the accent line every time.
+    @State private var recentlyShownAt: [String: Date] = [:]
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -104,23 +112,52 @@ struct NotchView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: activity?.id) { _, _ in
-            guard activity != nil else { return }
-            // A user tap-cycle bumps `cycleSlot` alongside the
-            // id change; a new publisher / priority shift does
-            // not. Only the latter should re-fire the trace.
+        .onChange(of: activity?.id) { oldID, newID in
+            let now = Date()
+            // Whatever was just displayed is "recent" as of
+            // now — mark it so a quick return to that id
+            // (within `traceSilenceWindow`) is treated as a
+            // priority shuffle, not a new arrival.
+            if let oldID { recentlyShownAt[oldID] = now }
+            guard let newID, activity != nil else { return }
+
+            // 1) Skip on user tap-cycle (cycleSlot bumped).
             let isCycle = cycleSlot != lastCycleSlot
             lastCycleSlot = cycleSlot
-            if !isCycle { triggerBorderTrace() }
+            if isCycle { return }
+
+            // 2) Skip when the new id was the displayed
+            //    activity in the last few seconds (Espresso
+            //    reclaiming after a Worktree boost, an item
+            //    blipping in and out, etc).
+            if let lastSeen = recentlyShownAt[newID],
+               now.timeIntervalSince(lastSeen)
+                    < Self.traceSilenceWindow {
+                return
+            }
+
+            triggerBorderTrace()
         }
         .onChange(of: cycleSlot) { _, new in
             lastCycleSlot = new
         }
         .onAppear {
             lastCycleSlot = cycleSlot
-            if activity != nil { triggerBorderTrace() }
+            if let id = activity?.id {
+                recentlyShownAt[id] = Date()
+                triggerBorderTrace()
+            }
         }
     }
+
+    /// Window after an activity leaves the slot during which
+    /// a return to that activity is considered a priority
+    /// shuffle (no trace), not a new arrival. Long enough to
+    /// cover Worktree's 2.5s focus-boost and similar brief
+    /// interruptions; short enough that an item legitimately
+    /// disappearing and coming back many seconds later still
+    /// gets a flash.
+    private static let traceSilenceWindow: TimeInterval = 15
 
     @ViewBuilder
     private func screenTopAccent(
