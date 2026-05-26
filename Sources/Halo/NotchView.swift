@@ -685,6 +685,17 @@ private struct ScreenAccentTrace: Shape {
         // Both branches start at the bottom-centre of the pill.
         p.move(to: CGPoint(x: islandFrame.midX, y: bottomY))
 
+        // 1pt offset that drops the horizontal top-edge
+        // segment just below the device's curved screen bezel.
+        // The line is otherwise centred on the screen's y=0,
+        // so half of it sits behind the bezel and the other
+        // half lands inside the rounded-corner falloff — only
+        // about a quarter of a point ends up visible. Pushing
+        // it down by a full point clears the bezel entirely
+        // while keeping the contour meeting the pill silhouette
+        // exactly at the wing's top corner (y=0).
+        let edgeDrop: CGFloat = 1
+
         switch side {
         case .right:
             // Bottom edge → entry point of the rounded corner.
@@ -711,8 +722,12 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(180),
                 endAngle: .degrees(270),
                 clockwise: false)
-            // Along the screen's top edge to its right side.
-            p.addLine(to: CGPoint(x: screenWidth, y: topY))
+            // 1pt drop right at the wing's top corner, then
+            // along the screen's top edge to its right side.
+            p.addLine(to: CGPoint(x: islandFrame.maxX,
+                                  y: topY + edgeDrop))
+            p.addLine(to: CGPoint(x: screenWidth,
+                                  y: topY + edgeDrop))
 
         case .left:
             // Bottom edge → entry point of the rounded corner.
@@ -740,8 +755,11 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(0),
                 endAngle: .degrees(-90),
                 clockwise: true)
-            // Along the screen's top edge to its left side.
-            p.addLine(to: CGPoint(x: 0, y: topY))
+            // 1pt drop right at the wing's top corner, then
+            // along the screen's top edge to its left side.
+            p.addLine(to: CGPoint(x: islandFrame.minX,
+                                  y: topY + edgeDrop))
+            p.addLine(to: CGPoint(x: 0, y: topY + edgeDrop))
         }
         return p
     }
