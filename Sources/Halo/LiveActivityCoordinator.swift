@@ -43,21 +43,33 @@ final class LiveActivityCoordinator {
     /// All currently-active payloads, high → low priority.
     private(set) var activities: [Resolved] = []
 
-    /// Index of the activity currently on display. Advances on
-    /// a fixed cadence so the island cycles through every
-    /// active publisher rather than parking on the single
-    /// highest-priority one.
+    /// Generation counter used purely as an animation key — the
+    /// SwiftUI view re-evaluates when this changes so the
+    /// island transitions smoothly between focus changes.
     private(set) var cycleIndex: Int = 0
 
-    /// The activity the island should render right now —
-    /// cycle-aware. Falls back to the first activity if the
-    /// index has drifted past the end of the array (which can
-    /// happen between a tick and the next `pollOnce`).
+    /// The activity the island should render right now. Two-
+    /// tier selection:
+    ///   1. **Focused** — any publisher inside its post-event
+    ///      focus window (text just changed, just appeared,
+    ///      transient HUD fired). Most-recent focus wins
+    ///      ties.
+    ///   2. **Ambient** — when nothing's focused, the highest-
+    ///      priority steady-state payload (Now Playing,
+    ///      Espresso ON, Worktree presence, etc.).
+    /// Returns nil only when no publisher is active at all.
     var topActivity: Resolved? {
         guard !activities.isEmpty else { return nil }
-        let safe = activities.indices.contains(cycleIndex)
-            ? cycleIndex : 0
-        return activities[safe]
+        let now = Date()
+        let focused = activities
+            .compactMap { a -> (Resolved, Date)? in
+                guard let until = focusUntil[a.id], until > now
+                else { return nil }
+                return (a, until)
+            }
+            .sorted { $0.1 > $1.1 }
+        if let first = focused.first { return first.0 }
+        return activities.first
     }
 
     /// Payloads older than this are treated as stale (writer
@@ -66,13 +78,29 @@ final class LiveActivityCoordinator {
     /// that a dead writer falls off within a sensible window.
     @ObservationIgnored private let payloadTTL: TimeInterval = 30
     @ObservationIgnored private var pollTimer: Timer?
-    /// Cycle through active publishers at this cadence so the
-    /// user sees every pill rather than parking on the single
-    /// highest-priority one. 4s feels right — long enough to
-    /// read each, short enough that you don't miss anything
-    /// during a casual glance at the menu bar.
-    @ObservationIgnored private let cycleInterval: TimeInterval = 4
-    @ObservationIgnored private var cycleTimer: Timer?
+
+    // MARK: Context-aware focus
+
+    /// How long an activity stays "fresh" / focused after a
+    /// meaningful state change. Long enough to read; short
+    /// enough that incidental changes don't hog the slot.
+    @ObservationIgnored private let focusDuration: TimeInterval = 4
+    /// Don't treat a text change as a focus-worthy event if it
+    /// happened within this window of the previous update —
+    /// that's how a 1Hz countdown (Espresso) avoids
+    /// permanently grabbing focus.
+    @ObservationIgnored private let rapidUpdateWindow: TimeInterval = 2
+
+    /// Last-seen compactTrailingText per id, so we can detect
+    /// when a publisher's value has changed.
+    @ObservationIgnored private var lastText: [String: String?] = [:]
+    /// Time of the previous update per id, used by the rapid-
+    /// update heuristic.
+    @ObservationIgnored private var lastUpdateAt: [String: Date] = [:]
+    /// "I want the slot until …" timestamp per id. Set on
+    /// arrival or on a non-rapid text change; consulted by
+    /// `topActivity` to decide who shows.
+    @ObservationIgnored private var focusUntil: [String: Date] = [:]
 
     /// In-process payloads — Halo's own publishers (volume,
     /// brightness, now-playing) write here directly instead of
@@ -90,45 +118,32 @@ final class LiveActivityCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.pollOnce() }
         }
-        cycleTimer = Timer.scheduledTimer(
-            withTimeInterval: cycleInterval, repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in self?.advanceCycle() }
-        }
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
-        cycleTimer?.invalidate()
-        cycleTimer = nil
     }
 
-    /// Advance to the next active publisher. No-op when the
-    /// list is empty or has only one item. Triggers an
-    /// `activities` mutation indirectly so `@Observable`
-    /// downstream views re-render.
-    private func advanceCycle() {
+    /// User-initiated step through the active set. Picks the
+    /// activity AFTER whatever's currently displayed and
+    /// gives it a focus window so it shows even when no
+    /// event would have triggered it. Lets the user browse
+    /// what's currently published without waiting for
+    /// anything to change.
+    func advanceCycleManually() {
         guard activities.count > 1 else { return }
-        cycleIndex = (cycleIndex + 1) % activities.count
-        // Re-publishing the array nudges @Observable to fire.
+        let currentID = topActivity?.id
+        let currentIdx = activities.firstIndex {
+            $0.id == currentID
+        } ?? -1
+        let next = activities[(currentIdx + 1) % activities.count]
+        focusUntil[next.id] = Date()
+            .addingTimeInterval(focusDuration)
+        cycleIndex &+= 1
+        // Nudge @Observable to fire.
         let snapshot = activities
         activities = snapshot
-    }
-
-    /// User-initiated cycle advance (click on the island).
-    /// Same logic as the timer but ALSO resets the 4s
-    /// auto-cycle clock so the next auto-advance comes a full
-    /// interval after the manual click — feels right when you
-    /// tap-tap-tap to step through.
-    func advanceCycleManually() {
-        advanceCycle()
-        cycleTimer?.invalidate()
-        cycleTimer = Timer.scheduledTimer(
-            withTimeInterval: cycleInterval, repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in self?.advanceCycle() }
-        }
     }
 
     /// Force an immediate re-poll. Used by settings toggles
@@ -187,22 +202,47 @@ final class LiveActivityCoordinator {
             }
             return $0.id < $1.id
         }
-        if collected != activities {
-            NSLog("[halo] activities changed: \(activities.count) → \(collected.count) (top=\(collected.first?.id ?? "—"))")
-            // Transient HUDs (priority ≥ 90) interrupt the
-            // cycle so volume / brightness HUDs appear the
-            // instant they fire — not on the next 4s tick.
-            // The new arrival is whatever wasn't in `activities`
-            // before; if its priority is high enough, jump to it.
-            let oldIDs = Set(activities.map(\.id))
-            let arrivals = collected.filter { !oldIDs.contains($0.id) }
-            if let urgent = arrivals.first(where: { $0.priority >= 90 }),
-               let idx = collected.firstIndex(where: { $0.id == urgent.id }) {
-                cycleIndex = idx
-            } else if !collected.indices.contains(cycleIndex) {
-                cycleIndex = 0
+
+        // Per-activity change detection. A new arrival OR a
+        // text change OUTSIDE the rapid-update window is a
+        // focus-worthy event; the publisher takes the slot
+        // for `focusDuration` seconds.
+        //
+        // Rapid changes (1Hz countdown text) don't grab focus
+        // — that's what `rapidUpdateWindow` shields against.
+        for a in collected {
+            let isNew = !lastText.keys.contains(a.id)
+            let prevText = lastText[a.id] ?? nil
+            let prevUpdate = lastUpdateAt[a.id] ?? .distantPast
+            let textChanged = prevText != a.compactTrailingText
+            let isRapid =
+                now.timeIntervalSince(prevUpdate) < rapidUpdateWindow
+
+            if isNew || (textChanged && !isRapid) {
+                focusUntil[a.id] = now
+                    .addingTimeInterval(focusDuration)
             }
+            lastText[a.id] = a.compactTrailingText
+            lastUpdateAt[a.id] = now
+        }
+        // Clean up bookkeeping for activities no longer
+        // active so memory doesn't grow unbounded.
+        let activeIDs = Set(collected.map(\.id))
+        for id in Array(lastText.keys) where !activeIDs.contains(id) {
+            lastText.removeValue(forKey: id)
+            lastUpdateAt.removeValue(forKey: id)
+            focusUntil.removeValue(forKey: id)
+        }
+
+        if collected != activities {
+            NSLog("[halo] activities changed: \(activities.count) → \(collected.count)")
             activities = collected
+        } else if !focusUntil.isEmpty {
+            // Activities array identical but a focus window
+            // may have just opened/closed — force re-publish
+            // so SwiftUI re-evaluates `topActivity`.
+            let snapshot = activities
+            activities = snapshot
         }
     }
 
