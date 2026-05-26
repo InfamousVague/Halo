@@ -71,14 +71,18 @@ struct NotchView: View {
                     // Spring on every visible attribute — frame
                     // width / height, icon, text — so the pill
                     // morphs smoothly when any of them change.
+                    // Hover-expansion spring matches the one
+                    // on `screenTopAccent` exactly so the pill
+                    // and the accent line morph in lockstep
+                    // through their shared `islandFrame`.
                     .animation(.spring(response: 0.32,
                                        dampingFraction: 0.86),
                                value: a.id)
                     .animation(.spring(response: 0.32,
                                        dampingFraction: 0.86),
                                value: a.compactTrailingText)
-                    .animation(.spring(response: 0.42,
-                                       dampingFraction: 0.84),
+                    .animation(.spring(response: 0.34,
+                                       dampingFraction: 0.9),
                                value: isExpanded)
                     .animation(.spring(response: 0.32,
                                        dampingFraction: 0.86),
@@ -96,9 +100,6 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: activity?.id) { _, _ in
             if activity != nil { triggerBorderTrace() }
-        }
-        .onChange(of: isExpanded) { _, expanded in
-            animateHoverAccent(expanded: expanded)
         }
         .onAppear {
             if activity != nil { triggerBorderTrace() }
@@ -167,19 +168,26 @@ struct NotchView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Match the island's hover-expansion spring so the
-            // contour morphs in lock-step with the pill rather
-            // than snapping to the new frame. `ScreenAccentTrace`
+            // Match the island's hover-expansion spring
+            // *exactly* so the contour morphs in lock-step
+            // with the pill rather than snapping to the new
+            // frame or lagging behind it. `ScreenAccentTrace`
             // is `Animatable` on its `islandFrame`, so this
             // animation propagates through to the path
             // coordinates and the trace stretches / contracts
             // alongside the pill body.
-            .animation(.spring(response: 0.42,
-                               dampingFraction: 0.84),
+            //
+            // No spring on text changes: per-second ticks
+            // (clock counters, music position) would otherwise
+            // animate the screen-edge line every second, and
+            // a 600pt path interpolating per-second was the
+            // source of the jittery "wobble" the user saw.
+            // Letting the path snap on text changes is
+            // invisible — the shift is only a point or two —
+            // and the pill still springs on its own.
+            .animation(.spring(response: 0.34,
+                               dampingFraction: 0.9),
                        value: isExpanded)
-            .animation(.spring(response: 0.32,
-                               dampingFraction: 0.86),
-                       value: a.compactTrailingText)
             .allowsHitTesting(false)
         }
     }
@@ -259,21 +267,10 @@ struct NotchView: View {
         let newColor = Self.accentColor(for: a)
         let token = UUID()
         traceToken = token
-        // If the user is currently hovering, the line should
-        // be sucked in — skip the trace animation entirely and
-        // just swap the colour. `animateHoverAccent` will
-        // bounce out in the new colour the next time hover
-        // ends. No underlay needed since both layers are
-        // hidden during hover.
-        if isExpanded {
-            previousAccentColor = nil
-            currentAccentColor = newColor
-            borderProgress = 0
-            return
-        }
-        // Normal trace: promote the current colour to "previous"
-        // (if we had one) so the new line paints over it from
-        // the bottom-centre out.
+        // Promote the current colour to "previous" (if we had
+        // one) so the new line paints over it from the
+        // bottom-centre out rather than flashing through a
+        // blank top edge.
         if let cur = currentAccentColor {
             previousAccentColor = cur
         }
@@ -289,39 +286,6 @@ struct NotchView: View {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if traceToken == token {
                 previousAccentColor = nil
-            }
-        }
-    }
-
-    /// Suck the accent line back to the centre when the user
-    /// hovers the island, then bounce it back out when they
-    /// leave. Two distinct springs:
-    ///
-    /// * Suck-in (`expanded == true`): a damped spring
-    ///   matching the pill's expansion spring so the line and
-    ///   the pill arrive at their hover states together.
-    /// * Bounce-out (`expanded == false`): a springier
-    ///   under-damped spring so the line overshoots past full
-    ///   and visibly settles back — the spring oscillation
-    ///   dips the trim under 1 mid-bounce, which the trim
-    ///   actually renders as the line briefly retreating and
-    ///   then snapping forward again.
-    private func animateHoverAccent(expanded: Bool) {
-        // Nothing drawn yet → nothing to animate.
-        guard currentAccentColor != nil else { return }
-        if expanded {
-            // Drop any in-flight underlay so the suck-in
-            // affects the single visible layer rather than
-            // leaving an old-colour shell behind.
-            previousAccentColor = nil
-            withAnimation(.spring(response: 0.42,
-                                  dampingFraction: 0.82)) {
-                borderProgress = 0
-            }
-        } else {
-            withAnimation(.spring(response: 0.55,
-                                  dampingFraction: 0.55)) {
-                borderProgress = 1
             }
         }
     }
