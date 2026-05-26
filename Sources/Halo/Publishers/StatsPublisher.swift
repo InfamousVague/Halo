@@ -63,29 +63,26 @@ final class StatsPublisher: HaloPublisher {
     private func publishCurrent() {
         let value: Int
         let symbol: String
-        let label: String
         switch current {
         case .cpu:
             value = sampleCPUPercent()
             symbol = "cpu"
-            label = "CPU"
         case .ram:
             value = sampleRAMPercent()
             symbol = "memorychip"
-            label = "RAM"
         case .disk:
             value = sampleDiskPercent()
             symbol = "internaldrive"
-            label = "Disk"
         }
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
                 LiveActivityCoordinator.symbolImage(symbol),
-            // Combine the metric name + value so the user sees
-            // "CPU 42%" rather than just "42%" — without it
-            // they couldn't tell which metric is on display.
-            compactTrailingText: "\(label) \(value)%",
+            // Icon alone identifies the metric — chip/cpu/drive
+            // glyphs are distinct enough that prefixing the
+            // text with "CPU"/"RAM"/"Disk" is noise. Just the
+            // percentage on the trailing side.
+            compactTrailingText: "\(value)%",
             compactTrailingImage: nil,
             tint: .white,
             priority: 20)
