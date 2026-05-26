@@ -277,7 +277,14 @@ private struct NowPlayingExpandedView: View {
                     .lineLimit(1)
                 scrubber
             }
-            controls
+            // Controls stack: play/pause row, then the
+            // "position / duration" read-out underneath so
+            // the user knows where the scrubber sits without
+            // having to glance at the compact pill.
+            VStack(spacing: 4) {
+                controls
+                timeReadout
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { startTicking() }
@@ -285,6 +292,31 @@ private struct NowPlayingExpandedView: View {
         .onChange(of: media?.title) { _, _ in
             livePosition = media?.positionSeconds ?? 0
         }
+    }
+
+    /// `00:42 / 03:14` — current position / total duration
+    /// under the play / pause row. Uses
+    /// `NotchView.dimmedUnitsText` so leading zeros and the
+    /// `:` / `/` separators tone down to 50%, matching the
+    /// compact pill.
+    private var timeReadout: some View {
+        let duration = media?.durationSeconds ?? 0
+        let pos = Self.formatTime(livePosition)
+        let dur = Self.formatTime(duration)
+        return NotchView
+            .dimmedUnitsText("\(pos) / \(dur)")
+            .font(.system(size: 10,
+                          weight: .medium,
+                          design: .rounded))
+            .monospacedDigit()
+            .lineLimit(1)
+    }
+
+    private static func formatTime(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%02d:%02d", m, s)
     }
 
     @ViewBuilder

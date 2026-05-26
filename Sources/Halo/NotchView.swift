@@ -460,8 +460,8 @@ struct NotchView: View {
     }
 
     /// Concatenates the string as `Text` runs, dimming the
-    /// "labels" around digits while leaving the digits at full
-    /// punch. Two categories of label:
+    /// "labels" around digits while leaving the meaningful
+    /// digits at full punch. Three categories of dim:
     ///
     /// * **Unit letters** following a digit — `h`/`m`/`s`/`d`
     ///   in things like `1h30m`, `5m 23s`, `1d4h`.
@@ -471,7 +471,11 @@ struct NotchView: View {
     ///   clearly numeric (digit immediately followed by `:`
     ///   or `%` somewhere in the run), so a branch name like
     ///   `feature/foo` doesn't get its `/` dimmed too.
-    fileprivate static func dimmedUnitsText(_ s: String) -> Text {
+    /// * **Leading zeros** — the padding `0` at the start of
+    ///   each numeric group (`0`*1*:23, *0*5m 23s) so the
+    ///   eye reads the magnitude without losing the constant
+    ///   width that prevents pill reflow.
+    static func dimmedUnitsText(_ s: String) -> Text {
         var result = Text("")
         let chars = Array(s)
         // Detect "this is a numeric label" — a digit
@@ -507,6 +511,23 @@ struct NotchView: View {
                 if isNumericContext &&
                    (ch == ":" || ch == "/" || ch == "%") {
                     return true
+                }
+                // Leading zero: a `0` at the start of a
+                // numeric run that has at least one more
+                // digit after it. So the `0` in `01:23` and
+                // both `0`s in `01h 05m` dim, but the `0` in
+                // `10:23` (preceded by `1`) stays bright,
+                // and a lone `0` like `0%` stays bright too
+                // (no digit follows, so it's the value not
+                // padding).
+                if ch == "0" {
+                    let prevIsDigit = i > 0
+                        && chars[i - 1].isNumber
+                    let nextIsDigit = i + 1 < chars.count
+                        && chars[i + 1].isNumber
+                    if !prevIsDigit && nextIsDigit {
+                        return true
+                    }
                 }
                 return false
             }()
@@ -600,8 +621,11 @@ enum Geometry {
             // 3 rows × 20pt + 2 gaps × 10pt = 80pt
             content = 80
         case "halo.nowplaying":
-            // 44pt artwork ≥ title+artist+scrubber stack
-            content = 50
+            // Controls column is now controls (~24pt) + 4pt
+            // gap + time read-out (~14pt) = ~42pt, plus the
+            // artwork at 44pt. Bump the slot from 50 → 60 so
+            // the read-out doesn't get clipped.
+            content = 60
         case "worktree":
             // Header row + divider + up to 5 branch rows ×
             // ~26pt each. Real branch count caps the height
