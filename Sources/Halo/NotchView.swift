@@ -34,6 +34,14 @@ struct NotchView: View {
     /// pill itself.
     var onTap: () -> Void = {}
 
+    /// 0 → 1: how far the border trace has expanded from
+    /// top-centre. Animated when a new activity takes the
+    /// slot. 0 = no border visible, 1 = full perimeter drawn.
+    @State private var borderProgress: Double = 0
+    /// 0 → 1: how visible the border is. Held at 1 while the
+    /// trace draws, then fades to 0 over ~400ms.
+    @State private var borderOpacity: Double = 0
+
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
     private var punchRadius: CGFloat { Geometry.punchRadius }
@@ -87,6 +95,17 @@ struct NotchView: View {
             .fill(Color.black)
             .frame(width: totalWidth, height: totalHeight)
 
+            // Border-trace accent: two stroked copies of the
+            // contour, one trimmed clockwise from top-centre,
+            // one trimmed counter-clockwise. Both grow until
+            // their progress halves meet at the bottom — the
+            // perimeter draws in from the screen-middle out
+            // to both edges, signalling a new activity took
+            // the slot.
+            borderAccent(
+                width: totalWidth, height: totalHeight,
+                color: Self.accentColor(for: a))
+
             VStack(spacing: 0) {
                 // Compact row — always reserves its space so
                 // the notch geometry stays put, but its content
@@ -118,6 +137,92 @@ struct NotchView: View {
         .position(x: centerX, y: totalHeight / 2)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
+        .onChange(of: a.id) { _, _ in
+            triggerBorderTrace()
+        }
+        .onAppear { triggerBorderTrace() }
+    }
+
+    /// Stroke layer used by the border-trace effect. Two copies
+    /// of `IslandBorderShape` — one trimmed clockwise from the
+    /// top-centre start point, one trimmed counter-clockwise
+    /// from the end point. Both share the same progress so
+    /// they meet at the bottom-centre when `borderProgress` is
+    /// 1, drawing the full perimeter in from the centre out.
+    @ViewBuilder
+    private func borderAccent(
+        width: CGFloat, height: CGFloat, color: Color
+    ) -> some View {
+        let half = borderProgress * 0.5
+        ZStack {
+            IslandBorderShape(
+                punchRadius: punchRadius,
+                bottomCornerRadius: bottomCornerRadius
+            )
+            .trim(from: 0, to: half)
+            .stroke(color, style: StrokeStyle(
+                lineWidth: 2, lineCap: .round))
+
+            IslandBorderShape(
+                punchRadius: punchRadius,
+                bottomCornerRadius: bottomCornerRadius
+            )
+            .trim(from: 1 - half, to: 1)
+            .stroke(color, style: StrokeStyle(
+                lineWidth: 2, lineCap: .round))
+        }
+        .frame(width: width, height: height)
+        .opacity(borderOpacity)
+        .allowsHitTesting(false)
+    }
+
+    /// Kick off the border-trace animation: 0 → 1 progress
+    /// over ~700ms, then fade opacity to 0 over ~500ms.
+    /// Cheap to call repeatedly — re-entry resets the animation
+    /// to a fresh frame.
+    private func triggerBorderTrace() {
+        borderProgress = 0
+        borderOpacity = 1
+        withAnimation(.easeOut(duration: 0.7)) {
+            borderProgress = 1
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            withAnimation(.easeIn(duration: 0.5)) {
+                borderOpacity = 0
+            }
+        }
+    }
+
+    /// Per-publisher accent. Prefers the activity's declared
+    /// tint (file-store publishers set it via tintHex); falls
+    /// back to a hand-picked brand color for built-in
+    /// publishers that publish white.
+    private static func accentColor(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> Color {
+        // The compact pill tint is white across publishers —
+        // detect that and route to the per-id brand color.
+        if let brand = brandColor(forID: a.id) { return brand }
+        return a.tint
+    }
+
+    private static func brandColor(forID id: String) -> Color? {
+        switch id {
+        case "halo.volume":     return Color(red: 0.36, green: 0.66, blue: 1.00)
+        case "halo.brightness": return Color(red: 1.00, green: 0.78, blue: 0.20)
+        case "halo.nowplaying": return Color(red: 0.96, green: 0.41, blue: 0.62)
+        case "halo.airpods":    return Color(red: 0.78, green: 0.78, blue: 0.82)
+        case "halo.stats":      return Color(red: 0.35, green: 0.83, blue: 0.85)
+        case "halo.battery":    return Color(red: 0.30, green: 0.83, blue: 0.50)
+        case "halo.vpn":        return Color(red: 0.30, green: 0.83, blue: 0.50)
+        case "halo.calendar":   return Color(red: 1.00, green: 0.36, blue: 0.34)
+        case "halo.github":     return Color(red: 0.55, green: 0.45, blue: 0.95)
+        case "halo.docker":     return Color(red: 0.07, green: 0.56, blue: 0.91)
+        // Suite-app publishers already carry a brand tint via
+        // tintHex; fall through to use `activity.tint`.
+        default:                return nil
+        }
     }
 
 
@@ -495,6 +600,75 @@ private struct IslandShape: Shape {
             clockwise: true)             // short arc via -45°
 
         p.closeSubpath()
+        return p
+    }
+}
+
+// MARK: - Border trace
+
+/// Same contour as `IslandShape` but the path STARTS at the
+/// top-centre and goes clockwise back to the top-centre via
+/// the close line. Used purely for the trace-in border
+/// animation — `NotchView` strokes two copies, one trimmed
+/// from 0 → progress (clockwise half) and one trimmed from
+/// 1-progress → 1 (counter-clockwise half), so the stroke
+/// grows from the top-centre outward in both directions until
+/// the whole perimeter is drawn at progress = 1.
+struct IslandBorderShape: Shape {
+    var punchRadius: CGFloat = 12
+    var bottomCornerRadius: CGFloat = 10
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        let pr = punchRadius
+        let br = min(bottomCornerRadius, h / 2)
+        let pillLeft = pr
+        let pillRight = w - pr
+        let centerX = w / 2
+
+        var p = Path()
+        // Start at top-centre — the visual "screen middle"
+        // anchor the trace expands from.
+        p.move(to: CGPoint(x: centerX, y: 0))
+        // Right along the top to the outer top-right corner.
+        p.addLine(to: CGPoint(x: w, y: 0))
+        // Right concave bite.
+        p.addArc(
+            center: CGPoint(x: w, y: pr),
+            radius: pr,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(180),
+            clockwise: true)
+        // Pill right edge.
+        p.addLine(to: CGPoint(x: pillRight, y: h - br))
+        // Bottom-right convex.
+        p.addArc(
+            center: CGPoint(x: pillRight - br, y: h - br),
+            radius: br,
+            startAngle: .degrees(0),
+            endAngle: .degrees(90),
+            clockwise: false)
+        // Bottom edge.
+        p.addLine(to: CGPoint(x: pillLeft + br, y: h))
+        // Bottom-left convex.
+        p.addArc(
+            center: CGPoint(x: pillLeft + br, y: h - br),
+            radius: br,
+            startAngle: .degrees(90),
+            endAngle: .degrees(180),
+            clockwise: false)
+        // Pill left edge.
+        p.addLine(to: CGPoint(x: pillLeft, y: pr))
+        // Left concave bite.
+        p.addArc(
+            center: CGPoint(x: 0, y: pr),
+            radius: pr,
+            startAngle: .degrees(0),
+            endAngle: .degrees(-90),
+            clockwise: true)
+        // Top edge from outer top-left back to top-centre.
+        p.addLine(to: CGPoint(x: centerX, y: 0))
         return p
     }
 }
