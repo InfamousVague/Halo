@@ -25,6 +25,9 @@ struct NotchView: View {
     /// shape stays the same.
     var cycleSlot: Int = 0
     var layout: NotchLayout
+    /// True once hover has held the island for ~1s. Drives
+    /// the downward-expanded card layout.
+    var isExpanded: Bool = false
     /// Click-the-pill handler. `NotchHost` flips the panel's
     /// `ignoresMouseEvents` only when the cursor is inside the
     /// island so this tap only ever fires from a click ON the
@@ -43,13 +46,21 @@ struct NotchView: View {
             Color.clear
             if let a = activity {
                 island(for: a)
-                    .animation(.spring(response: 0.34,
-                                       dampingFraction: 0.78),
+                    // Spring on every visible attribute — frame
+                    // width / height, icon, text — so the pill
+                    // morphs smoothly when any of them change.
+                    .animation(.spring(response: 0.32,
+                                       dampingFraction: 0.86),
                                value: a.id)
-                    .animation(.spring(response: 0.34,
-                                       dampingFraction: 0.82),
+                    .animation(.spring(response: 0.32,
+                                       dampingFraction: 0.86),
+                               value: a.compactTrailingText)
+                    .animation(.spring(response: 0.42,
+                                       dampingFraction: 0.84),
+                               value: isExpanded)
+                    .animation(.spring(response: 0.32,
+                                       dampingFraction: 0.86),
                                value: cycleSlot)
-                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -59,14 +70,16 @@ struct NotchView: View {
     private func island(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        let frame = Geometry.islandFrame(for: a, layout: layout)
+        let frame = Geometry.islandFrame(
+            for: a, layout: layout, expanded: isExpanded)
         let totalWidth = frame.width
         let totalHeight = frame.height
         let centerX = frame.midX
 
         let notchW = layout.notchTrailingX - layout.notchLeadingX
+        let compactRowHeight = layout.menuBarHeight + 1
 
-        ZStack {
+        ZStack(alignment: .top) {
             IslandShape(
                 punchRadius: punchRadius,
                 bottomCornerRadius: bottomCornerRadius
@@ -74,20 +87,32 @@ struct NotchView: View {
             .fill(Color.black)
             .frame(width: totalWidth, height: totalHeight)
 
-            // Icon left, text right, notch in the middle.
-            HStack(spacing: 0) {
-                leadingContent(for: a)
-                Spacer(minLength: notchW + notchClearance * 2)
-                trailingContent(for: a)
+            VStack(spacing: 0) {
+                // Compact row — always present. Stays at the
+                // very top so the notch geometry still reads
+                // (concave outer corners hug the cutout).
+                HStack(spacing: 0) {
+                    leadingContent(for: a)
+                    Spacer(minLength: notchW + notchClearance * 2)
+                    trailingContent(for: a)
+                }
+                .padding(.horizontal, contentInset)
+                .frame(width: totalWidth, height: compactRowHeight)
+
+                if isExpanded {
+                    ExpandedCard(activity: a)
+                        .frame(width: totalWidth,
+                               height: totalHeight - compactRowHeight,
+                               alignment: .top)
+                        .transition(.opacity.combined(
+                            with: .move(edge: .top)))
+                }
             }
-            .padding(.horizontal, contentInset)
-            .frame(width: totalWidth, height: totalHeight)
+            .frame(width: totalWidth, height: totalHeight,
+                   alignment: .top)
         }
         .frame(width: totalWidth, height: totalHeight)
         .position(x: centerX, y: totalHeight / 2)
-        // Capture taps on the entire pill — only fires when the
-        // panel is in capture mode (cursor over the island), so
-        // clicks elsewhere in the menu bar are unaffected.
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
     }
@@ -99,12 +124,15 @@ struct NotchView: View {
     ) -> some View {
         if let img = a.compactLeadingImage {
             // B&W scheme — every glyph tints white, ignoring
-            // the publisher's tintHex. Brand colours come back
-            // later as an opt-in setting.
+            // the publisher's tintHex. `.id(a.id)` + transition
+            // forces a crossfade when the displayed activity
+            // swaps (e.g. Volume → Espresso → Worktree).
             Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
+                .id("lead-\(a.id)")
+                .transition(.opacity)
         }
     }
 
@@ -115,18 +143,25 @@ struct NotchView: View {
         if let text = a.compactTrailingText {
             // Match the system menu-bar clock — same size,
             // regular weight, default (non-rounded) design.
-            // Was 13pt semibold rounded which read as
-            // emphasised next to the rest of the bar.
+            // `.contentTransition(.opacity)` crossfades when
+            // the text changes within the same activity (e.g.
+            // Espresso countdown ticks, Stats percentage
+            // updates).
             Text(text)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
+                .contentTransition(.opacity)
+                .id("trail-text-\(a.id)")
+                .transition(.opacity)
         } else if let img = a.compactTrailingImage {
             Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)
+                .id("trail-img-\(a.id)")
+                .transition(.opacity)
         }
     }
 
@@ -191,16 +226,41 @@ enum Geometry {
         return 0
     }
 
+    /// Minimum width an expanded card grows to (regardless of
+    /// the compact pill's content width). Wide enough for the
+    /// 3-row Stats layout or a multi-device AirPods layout.
+    static let expandedMinWidth: CGFloat = 320
+
+    /// Per-activity extra height for the expanded card. Sums
+    /// the activity's intrinsic content height + the card's
+    /// internal padding (12 top + 14 bottom = 26pt). Lets the
+    /// island fit content tightly rather than sitting on a
+    /// fixed bottom-padding floor.
+    static func expandedExtraHeight(
+        for a: LiveActivityCoordinator.Resolved?
+    ) -> CGFloat {
+        let padding: CGFloat = 26  // 12 top + 14 bottom
+        let content: CGFloat
+        switch a?.id {
+        case "halo.stats":
+            // 3 rows × 20pt + 2 gaps × 10pt = 80pt
+            content = 80
+        default:
+            // Generic row: 26pt icon + spacing ≈ 30pt
+            content = 30
+        }
+        return content + padding
+    }
+
     /// The visible pill's frame in panel-local coordinates with
     /// the SwiftUI convention (origin top-left). The pill's
     /// left and right wings size INDEPENDENTLY to their own
     /// content — long trailing text doesn't force an empty
-    /// left wing to match, and vice versa. The pill is no
-    /// longer strictly centred on the notch; it grows
-    /// asymmetrically into whichever side has more text.
+    /// left wing to match, and vice versa.
     ///
-    /// Both wings still respect `sidePad` as a minimum so a
-    /// tiny icon doesn't leave the wing flush with the notch.
+    /// When `expanded`, the island grows DOWNWARD into a card
+    /// (+`expandedExtraHeight`) and widens symmetrically to at
+    /// least `expandedMinWidth` so the rich content has room.
     static func islandFrame(
         for a: LiveActivityCoordinator.Resolved?,
         layout: NotchLayout,
@@ -209,22 +269,30 @@ enum Geometry {
         let notchW = layout.notchTrailingX - layout.notchLeadingX
         let leadW = leadingWidth(for: a)
         let trailW = trailingWidth(for: a)
-        // Per-side minimum wing width — covers content +
-        // padding to the inner side of the notch.
         let leftHalf = max(
             leadW + contentInset + notchClearance,
             sidePad)
         let rightHalf = max(
             trailW + contentInset + notchClearance,
             sidePad)
-        let totalWidth = leftHalf + notchW + rightHalf
-        // +1pt overlap onto the menu-bar bottom border so the
-        // pill reads as flush with the menu bar — otherwise
-        // anti-aliasing leaves a 1px seam.
-        let totalHeight = layout.menuBarHeight + 1
-        // leftEdge in panel coords = notch left minus our
-        // left-wing width.
-        let leftEdge = layout.notchLeadingX - leftHalf
+        var totalWidth = leftHalf + notchW + rightHalf
+        var totalHeight = layout.menuBarHeight + 1
+        if expanded {
+            // Symmetric extra width centred on the notch so
+            // the card grows evenly on both sides.
+            let needed = max(expandedMinWidth, totalWidth)
+            totalWidth = needed
+            totalHeight += expandedExtraHeight(for: a)
+        }
+        // Centre on the notch when expanded (the card needs
+        // symmetric room for the widget grid), otherwise stay
+        // asymmetric so compact text alignment looks right.
+        let leftEdge: CGFloat
+        if expanded {
+            leftEdge = layout.notchCenterX - totalWidth / 2
+        } else {
+            leftEdge = layout.notchLeadingX - leftHalf
+        }
         return CGRect(
             x: leftEdge, y: 0,
             width: totalWidth, height: totalHeight)
