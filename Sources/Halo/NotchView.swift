@@ -141,13 +141,14 @@ struct NotchView: View {
                 .transition(.opacity)
         } else if let img = a.compactLeadingImage {
             // B&W scheme — every glyph tints white, ignoring
-            // the publisher's tintHex. `.id(a.id)` + transition
-            // forces a crossfade when the displayed activity
-            // swaps (e.g. Volume → Espresso → Worktree).
+            // the publisher's tintHex. 90% so the icon reads
+            // as supporting content next to 100% primary text
+            // (the "data" side gets full punch).
             Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
+                .opacity(0.9)
                 .id("lead-\(a.id)")
                 .transition(.opacity)
         }
@@ -158,12 +159,9 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         if let text = a.compactTrailingText {
-            // Match the system menu-bar clock — same size,
-            // regular weight, default (non-rounded) design.
-            // `.contentTransition(.opacity)` crossfades when
-            // the text changes within the same activity (e.g.
-            // Espresso countdown ticks, Stats percentage
-            // updates).
+            // Trailing slot is the data — full-opacity white,
+            // sized to match the system menu-bar clock so the
+            // pill looks native next to the rest of the bar.
             Text(text)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
@@ -177,6 +175,7 @@ struct NotchView: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)
+                .opacity(0.9)
                 .id("trail-img-\(a.id)")
                 .transition(.opacity)
         }

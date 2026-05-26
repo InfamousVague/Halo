@@ -11,6 +11,24 @@ import SwiftUI
 ///
 /// The card lays its own padding internally — the caller just
 /// hands it a frame matching `Geometry.expandedExtraHeight`.
+///
+/// Visual hierarchy used by all sub-views:
+///   • Primary text → `.white` (100%) — the data.
+///   • Secondary text → `.white.opacity(0.62)` — labels,
+///     subtitles, captions.
+///   • Tertiary text / icons → `.white.opacity(0.4)` —
+///     metadata, affordances.
+///   • Faint surface → `.white.opacity(0.08)` — base of cells
+///     / progress-bar tracks.
+///   • Soft surface → `.white.opacity(0.14)` — pill buttons,
+///     dividers.
+extension Color {
+    fileprivate static let haloSecondary = Color.white.opacity(0.62)
+    fileprivate static let haloTertiary = Color.white.opacity(0.4)
+    fileprivate static let haloSurfaceFaint = Color.white.opacity(0.08)
+    fileprivate static let haloSurfaceSoft = Color.white.opacity(0.14)
+}
+
 struct ExpandedCard: View {
     let activity: LiveActivityCoordinator.Resolved
 
@@ -52,17 +70,17 @@ struct ExpandedCard: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 26, height: 26)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.haloTertiary)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(titleForActivity)
                     .font(.system(size: 11, weight: .semibold))
                     .tracking(0.4)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.haloSecondary)
                 if let value = activity.compactTrailingText {
                     Text(value)
                         .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(.white)
                 }
             }
             Spacer(minLength: 0)
@@ -118,7 +136,7 @@ private struct WorktreeExpandedView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 18, height: 18)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.haloTertiary)
                 }
                 Text(currentLabel)
                     .font(.system(size: 12, weight: .semibold))
@@ -130,14 +148,14 @@ private struct WorktreeExpandedView: View {
                         .padding(.vertical, 1)
                         .background(
                             Capsule().fill(
-                                Color.orange.opacity(0.25)))
-                        .foregroundStyle(.orange)
+                                Color.orange.opacity(0.22)))
+                        .foregroundStyle(.orange.opacity(0.85))
                 }
                 Spacer(minLength: 0)
             }
             if !otherBranches.isEmpty {
                 Divider()
-                    .background(Color.white.opacity(0.12))
+                    .background(Color.haloSurfaceFaint)
                 VStack(spacing: 4) {
                     ForEach(otherBranches, id: \.self) { b in
                         BranchRow(name: b) {
@@ -175,22 +193,22 @@ private struct BranchRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(.haloSecondary)
                 Text(name)
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.88))
+                    .foregroundStyle(.haloSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.right")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.haloTertiary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 5,
                                  style: .continuous)
-                    .fill(Color.white.opacity(0.06)))
+                    .fill(Color.haloSurfaceFaint))
         }
         .buttonStyle(.plain)
     }
@@ -226,7 +244,7 @@ private struct NowPlayingExpandedView: View {
                     .lineLimit(1)
                 Text(media?.artist ?? "")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.haloSecondary)
                     .lineLimit(1)
                 scrubber
             }
@@ -249,10 +267,10 @@ private struct NowPlayingExpandedView: View {
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.haloSurfaceFaint)
                 Image(systemName: "music.note")
                     .font(.system(size: 18))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(.haloTertiary)
             }
         }
     }
@@ -266,9 +284,9 @@ private struct NowPlayingExpandedView: View {
         return GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.14))
+                    .fill(Color.haloSurfaceSoft)
                 Capsule()
-                    .fill(Color.white)
+                    .fill(Color.white.opacity(0.85))
                     .frame(width: max(2, proxy.size.width
                                       * CGFloat(progress)))
             }
@@ -342,10 +360,11 @@ private struct ControlButton: View {
                               weight: .semibold))
                 .frame(width: large ? 28 : 22,
                        height: large ? 28 : 22)
-                .foregroundStyle(.white)
+                .foregroundStyle(.white.opacity(large ? 1 : 0.85))
                 .background(
-                    Circle().fill(Color.white.opacity(
-                        large ? 0.16 : 0.08)))
+                    Circle().fill(
+                        large ? Color.haloSurfaceSoft
+                              : Color.haloSurfaceFaint))
         }
         .buttonStyle(.plain)
     }
@@ -375,16 +394,16 @@ private struct EspressoExpandedView: View {
                     .resizable()
                     .scaledToFit()
                     .frame(width: 26, height: 26)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.haloTertiary)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("ESPRESSO")
                     .font(.system(size: 11, weight: .semibold))
                     .tracking(0.4)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.haloSecondary)
                 Text(activity.compactTrailingText ?? "OFF")
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(.white)
             }
             Spacer(minLength: 0)
             if isActive {
@@ -404,7 +423,7 @@ private struct EspressoExpandedView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Capsule().fill(Color.white.opacity(0.14)))
+                        Capsule().fill(Color.haloSurfaceSoft))
                     .foregroundStyle(.white)
                     .font(.system(size: 11, weight: .semibold))
                 }
@@ -536,7 +555,7 @@ private struct StatRow: View {
         HStack(spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(.haloSecondary)
                 .frame(width: 18, alignment: .leading)
             ProgressBar(value: Double(value) / 100.0)
                 .frame(height: 5)
@@ -557,9 +576,9 @@ private struct ProgressBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.14))
+                    .fill(Color.haloSurfaceSoft)
                 Capsule()
-                    .fill(Color.white)
+                    .fill(Color.white.opacity(0.85))
                     .frame(width: max(2, proxy.size.width
                                       * CGFloat(min(1, max(0, value)))))
             }
