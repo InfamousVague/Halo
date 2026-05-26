@@ -48,19 +48,26 @@ final class LiveActivityCoordinator {
     /// island transitions smoothly between focus changes.
     private(set) var cycleIndex: Int = 0
 
-    /// The activity the island should render right now. Two-
+    /// The activity the island should render right now. Three-
     /// tier selection:
-    ///   1. **Focused** — any publisher inside its post-event
+    ///   1. **User-locked** — the publisher the user manually
+    ///      navigated to via tap, pinned for `userLockDuration`
+    ///      seconds. Overrides everything else.
+    ///   2. **Focused** — any publisher inside its post-event
     ///      focus window (text just changed, just appeared,
-    ///      transient HUD fired). Most-recent focus wins
-    ///      ties.
-    ///   2. **Ambient** — when nothing's focused, the highest-
+    ///      transient HUD fired). Most-recent focus wins ties.
+    ///   3. **Ambient** — when nothing's focused, the highest-
     ///      priority steady-state payload (Now Playing,
     ///      Espresso ON, Worktree presence, etc.).
     /// Returns nil only when no publisher is active at all.
     var topActivity: Resolved? {
         guard !activities.isEmpty else { return nil }
         let now = Date()
+        if let lockedID = userLockedID,
+           let until = userLockUntil, until > now,
+           let pinned = activities.first(where: { $0.id == lockedID }) {
+            return pinned
+        }
         let focused = activities
             .compactMap { a -> (Resolved, Date)? in
                 guard let until = focusUntil[a.id], until > now
@@ -101,6 +108,17 @@ final class LiveActivityCoordinator {
     /// arrival or on a non-rapid text change; consulted by
     /// `topActivity` to decide who shows.
     @ObservationIgnored private var focusUntil: [String: Date] = [:]
+
+    // MARK: User attention lock
+
+    /// When the user taps the pill we pin display to that
+    /// publisher for `userLockDuration` and suppress focus
+    /// events from *other* publishers during the lock. Stops
+    /// (e.g.) Espresso's state-change pulls from yanking the
+    /// user back the moment they've navigated away.
+    @ObservationIgnored private var userLockedID: String?
+    @ObservationIgnored private var userLockUntil: Date?
+    @ObservationIgnored private let userLockDuration: TimeInterval = 15
 
     /// In-process payloads — Halo's own publishers (volume,
     /// brightness, now-playing) write here directly instead of
@@ -145,11 +163,11 @@ final class LiveActivityCoordinator {
     }
 
     /// User-initiated step through the active set. Picks the
-    /// activity AFTER whatever's currently displayed and
-    /// gives it a focus window so it shows even when no
-    /// event would have triggered it. Lets the user browse
-    /// what's currently published without waiting for
-    /// anything to change.
+    /// activity AFTER whatever's currently displayed and pins
+    /// it via the user-lock for `userLockDuration` seconds.
+    /// During that window other publishers can still update
+    /// their data, but they CAN'T grab focus — the user just
+    /// said "I want this one," we respect it.
     func advanceCycleManually() {
         guard activities.count > 1 else { return }
         let currentID = topActivity?.id
@@ -157,8 +175,8 @@ final class LiveActivityCoordinator {
             $0.id == currentID
         } ?? -1
         let next = activities[(currentIdx + 1) % activities.count]
-        focusUntil[next.id] = Date()
-            .addingTimeInterval(focusDuration)
+        userLockedID = next.id
+        userLockUntil = Date().addingTimeInterval(userLockDuration)
         cycleIndex &+= 1
         // Nudge @Observable to fire.
         let snapshot = activities
@@ -229,6 +247,13 @@ final class LiveActivityCoordinator {
         //
         // Rapid changes (1Hz countdown text) don't grab focus
         // — that's what `rapidUpdateWindow` shields against.
+        //
+        // During a user lock (after a manual tap) only the
+        // locked publisher can grab focus. Everyone else's
+        // updates are silent — they still write to lastText
+        // so we don't fire a stale "change" when the lock
+        // releases, but we don't extend focusUntil for them.
+        let isLocked = (userLockUntil ?? .distantPast) > now
         for a in collected {
             let isNew = !lastText.keys.contains(a.id)
             let prevText = lastText[a.id] ?? nil
@@ -236,8 +261,9 @@ final class LiveActivityCoordinator {
             let textChanged = prevText != a.compactTrailingText
             let isRapid =
                 now.timeIntervalSince(prevUpdate) < rapidUpdateWindow
+            let canFocus = !isLocked || a.id == userLockedID
 
-            if isNew || (textChanged && !isRapid) {
+            if canFocus && (isNew || (textChanged && !isRapid)) {
                 focusUntil[a.id] = now
                     .addingTimeInterval(focusDuration)
             }
