@@ -435,13 +435,21 @@ struct NotchView: View {
             // the publisher's tintHex. 90% so the icon reads
             // as supporting content next to 100% primary text
             // (the "data" side gets full punch).
+            //
+            // `tintImage` builds a fresh NSImage every render,
+            // so when the trailing text ticks (Espresso's 1Hz
+            // countdown) the parent's spring would otherwise
+            // crossfade the icon — that read as the icon
+            // "flashing" on every second. Opt out of that
+            // animation explicitly; the icon itself doesn't
+            // need to animate on text changes.
             Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
                 .opacity(0.9)
                 .id("lead-\(a.id)")
-                .transition(.opacity)
+                .animation(nil, value: a.compactTrailingText)
         }
     }
 
@@ -455,12 +463,18 @@ struct NotchView: View {
             // to 50% — the number is the data, the unit is the
             // label. Pure-letter strings (branch names, etc.)
             // stay at 100%.
+            //
+            // `.contentTransition(.numericText())` gives
+            // numeric digit changes the iOS-style slot-machine
+            // roll. Espresso's 1Hz countdown / music position
+            // / volume HUD percentages now ticker rather than
+            // crossfade.
             Self.dimmedUnitsText(text)
                 .font(.system(size: 13))
                 .lineLimit(1)
                 .fixedSize()
+                .contentTransition(.numericText())
                 .id("trail-text-\(a.id)")
-                .transition(.opacity)
         } else if let img = a.compactTrailingImage {
             Image(nsImage: tintImage(img, color: .white))
                 .resizable()
@@ -468,7 +482,7 @@ struct NotchView: View {
                 .frame(width: 16, height: 16)
                 .opacity(0.9)
                 .id("trail-img-\(a.id)")
-                .transition(.opacity)
+                .animation(nil, value: a.compactTrailingText)
         }
     }
 
