@@ -111,6 +111,8 @@ final class LiveActivityCoordinator {
     /// HUDs etc.). `.distantFuture` for steady-state payloads.
     @ObservationIgnored private var inProcessExpiry: [String: Date] = [:]
 
+    @ObservationIgnored private var refreshObserver: NSObjectProtocol?
+
     func start() {
         pollOnce()
         pollTimer = Timer.scheduledTimer(
@@ -118,11 +120,28 @@ final class LiveActivityCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.pollOnce() }
         }
+        // Publishers post this distributed notification right
+        // after writing — gives us instant refresh instead of
+        // waiting up to a second for the next polling tick.
+        refreshObserver = DistributedNotificationCenter.default()
+            .addObserver(
+                forName: Notification.Name(
+                    "com.mattssoftware.halo.refresh"),
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.pollOnce() }
+            }
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        if let o = refreshObserver {
+            DistributedNotificationCenter.default()
+                .removeObserver(o)
+            refreshObserver = nil
+        }
     }
 
     /// User-initiated step through the active set. Picks the
@@ -295,17 +314,42 @@ final class LiveActivityCoordinator {
         return Color(red: r, green: g, blue: b)
     }
 
-    /// Resolve an SF Symbol name to a tintable template NSImage.
-    /// Exposed so in-process publishers (`VolumePublisher` etc.)
-    /// can build payloads without each importing AppKit symbols
+    /// Resolve an SF Symbol name (or one of Halo's bundled
+    /// brand glyphs) to a tintable template NSImage. Exposed
+    /// so in-process publishers (`VolumePublisher` etc.) can
+    /// build payloads without each importing AppKit symbols
     /// piecemeal.
+    ///
+    /// Special names mapped to bundled assets:
+    ///   • `"worktree.git"` → official Git logo at
+    ///     `Resources/WorktreeGit.png` (CC BY 3.0, Jason Long).
+    /// Anything else is treated as an SF Symbol name.
     static func symbolImage(_ name: String?) -> NSImage? {
-        guard let name, !name.isEmpty,
-              let img = NSImage(systemSymbolName: name,
-                                accessibilityDescription: nil)
+        guard let name, !name.isEmpty else { return nil }
+        if let bundled = bundledBrandImage(name) { return bundled }
+        guard let img = NSImage(
+            systemSymbolName: name,
+            accessibilityDescription: nil)
         else { return nil }
         img.isTemplate = true
         return img
+    }
+
+    private static func bundledBrandImage(_ name: String) -> NSImage? {
+        switch name {
+        case "worktree.git":
+            guard let url = Bundle.module.url(
+                forResource: "WorktreeGit", withExtension: "png"),
+                  let img = NSImage(contentsOf: url)
+            else { return nil }
+            // Force consistent draw size + treat as template so
+            // it tints the same as SF Symbols on the pill.
+            img.size = NSSize(width: 20, height: 20)
+            img.isTemplate = true
+            return img
+        default:
+            return nil
+        }
     }
 }
 
