@@ -263,10 +263,11 @@ enum Geometry {
     static func expandedExtraHeight(
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
-        // 12 top + `contentInset` (22) bottom — matches the
-        // horizontal padding so the card has equal breathing
-        // room on every side.
-        let padding: CGFloat = 12 + contentInset
+        // 12 top + 10 bottom — matches `ExpandedCard`'s
+        // internal vertical insets. Less than the horizontal
+        // pad on purpose; the rounded bottom corners already
+        // provide visual breathing room.
+        let padding: CGFloat = 12 + 10
         let content: CGFloat
         switch a?.id {
         case "halo.stats":

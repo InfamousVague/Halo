@@ -75,14 +75,15 @@ struct ExpandedCard: View {
                 genericContent
             }
         }
-        // Match the compact row's horizontal inset
-        // (`Geometry.contentInset`, 22pt) on every side so
-        // content has equal breathing room — the bottom was
-        // 14pt before, which read tighter than the 22pt
-        // wings.
+        // 22pt horizontal inset to match the compact-row
+        // icon's column. Vertical pad is asymmetric — 12pt top
+        // (clear of the compact row band) + 10pt bottom — the
+        // bottom inset just needs visual breathing room from
+        // the pill's rounded corner, not the full side
+        // breathing room.
         .padding(.horizontal, Geometry.contentInset)
         .padding(.top, 12)
-        .padding(.bottom, Geometry.contentInset)
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
