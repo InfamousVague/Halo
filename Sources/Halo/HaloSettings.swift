@@ -47,7 +47,10 @@ enum HaloSettings {
     }
 
     static var statsEnabled: Bool {
-        defaultOn(forKey: "halo.publisher.stats")
+        // Default off — Stats is ambient; the user can opt in
+        // from Settings if they want a persistent CPU/RAM/Disk
+        // readout in the island.
+        UserDefaults.standard.bool(forKey: "halo.publisher.stats")
     }
     static func setStatsEnabled(_ on: Bool) {
         UserDefaults.standard.set(on, forKey: "halo.publisher.stats")
@@ -88,12 +91,6 @@ enum HaloSettings {
         UserDefaults.standard.set(on, forKey: "halo.publisher.docker")
     }
 
-    static var browserTabEnabled: Bool {
-        defaultOn(forKey: "halo.publisher.browser")
-    }
-    static func setBrowserTabEnabled(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: "halo.publisher.browser")
-    }
 
     // MARK: - Suite apps (external publishers via the file store)
 

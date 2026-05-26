@@ -1,14 +1,27 @@
 import AppKit
 import CoreAudio
 
-/// Watches the default output device's master volume + mute and
-/// emits a 2s-TTL HUD payload on every change. Same UX as the
-/// system volume bezel, but rendered inside the island.
+/// Cross-device "virtual main volume" selector. The plain
+/// `kAudioDevicePropertyVolumeScalar` only works for devices
+/// that expose a master element — AirPods, Bluetooth speakers,
+/// and many USB DACs don't (volume lives on per-channel
+/// elements). The virtual selector is what the system menu-bar
+/// volume slider uses; it routes to whatever scheme the device
+/// supports under the hood.
+private let kVirtualMainVolume: AudioObjectPropertySelector =
+    AudioObjectPropertySelector(0x766D766D)  // 'vmvm'
+
+/// Watches the default output device's volume + mute and emits
+/// a 2s-TTL HUD payload on every change. Same UX as the system
+/// volume bezel, but rendered inside the island.
 ///
 /// Implementation notes:
 ///   • CoreAudio's `AudioObjectAddPropertyListenerBlock` delivers
 ///     change events on the dispatch queue we hand it (main).
 ///     No timer needed.
+///   • Volume reads use the `'vmvm'` virtual-main selector so
+///     Bluetooth / AirPods / USB devices that don't expose a
+///     master element still report a sane scalar.
 ///   • We re-bind when the user changes the default output
 ///     (AirPods connect, HDMI plugs in) by listening on the
 ///     system object for `kAudioHardwarePropertyDefaultOutputDevice`.
@@ -69,9 +82,12 @@ final class VolumePublisher: HaloPublisher {
         else { return }
         device = newDevice
 
-        // Volume listener.
+        // Volume listener on the cross-device virtual main —
+        // catches changes on Bluetooth speakers / AirPods /
+        // USB DACs where the per-device VolumeScalar isn't
+        // exposed on the master element.
         var volAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
+            mSelector: kVirtualMainVolume,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
@@ -131,7 +147,7 @@ final class VolumePublisher: HaloPublisher {
         var vol: Float32 = 0
         var size = UInt32(MemoryLayout<Float32>.size)
         var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
+            mSelector: kVirtualMainVolume,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain)
         AudioObjectGetPropertyData(

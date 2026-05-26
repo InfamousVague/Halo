@@ -118,11 +118,6 @@ final class NotchHost: NSObject {
             d.start()
             publishers.append(d)
         }
-        if HaloSettings.browserTabEnabled {
-            let b = BrowserTabPublisher(coordinator: coordinator)
-            b.start()
-            publishers.append(b)
-        }
     }
 
     private func stopPublishers() {
