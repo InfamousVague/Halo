@@ -16,5 +16,14 @@
   -->
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <!--
+    Bluetooth scanning permission — required for the AirPods
+    battery publisher, which listens for Apple's proximity-
+    pairing BLE advertisements (manufacturer 0x004C, subtype
+    0x07). The advertisements carry left/right/case battery
+    percentages; we only read them, never connect or pair.
+  -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Halo reads AirPods battery levels from nearby Bluetooth advertisements to show them in the island.</string>
 </dict>
 </plist>

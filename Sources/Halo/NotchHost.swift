@@ -73,6 +73,11 @@ final class NotchHost: NSObject {
             b.start()
             publishers.append(b)
         }
+        if HaloSettings.airpodsEnabled {
+            let a = AirPodsPublisher(coordinator: coordinator)
+            a.start()
+            publishers.append(a)
+        }
     }
 
     private func stopPublishers() {
