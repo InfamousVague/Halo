@@ -188,6 +188,13 @@ final class LiveActivityCoordinator {
     /// meaningful state change. Long enough to read; short
     /// enough that incidental changes don't hog the slot.
     @ObservationIgnored private let focusDuration: TimeInterval = 4
+    /// Per-id focus-window override. Camera / mic going active
+    /// is a privacy moment — give Peephole a longer guaranteed
+    /// slot (5s) before the rotation can advance past it.
+    @ObservationIgnored
+        private let focusDurationOverrides: [String: TimeInterval] = [
+            "peephole": 5,
+        ]
     /// Don't treat a text change as a focus-worthy event if it
     /// happened within this window of the previous update —
     /// that's how a 1Hz countdown (Espresso) avoids
@@ -432,8 +439,10 @@ final class LiveActivityCoordinator {
             let canFocus = !isLocked || a.id == userLockedID
 
             if canFocus && (isNew || (textChanged && !isRapid)) {
+                let duration = focusDurationOverrides[a.id]
+                    ?? focusDuration
                 focusUntil[a.id] = now
-                    .addingTimeInterval(focusDuration)
+                    .addingTimeInterval(duration)
             }
             lastText[a.id] = a.compactTrailingText
             lastUpdateAt[a.id] = now
@@ -525,9 +534,6 @@ final class LiveActivityCoordinator {
     /// Special names mapped to bundled assets:
     ///   • `"worktree.git"` → official Git logo at
     ///     `Resources/WorktreeGit.png` (CC BY 3.0, Jason Long).
-    ///   • `"port.cleat"` → Port's own menu-bar glyph at
-    ///     `Resources/PortMenuBar.png`, so the island pill
-    ///     matches the menu bar item.
     /// Anything else is treated as an SF Symbol name.
     static func symbolImage(_ name: String?) -> NSImage? {
         guard let name, !name.isEmpty else { return nil }
@@ -544,8 +550,6 @@ final class LiveActivityCoordinator {
         switch name {
         case "worktree.git":
             return loadBundled("WorktreeGit")
-        case "port.cleat":
-            return loadBundled("PortMenuBar")
         default:
             return nil
         }
