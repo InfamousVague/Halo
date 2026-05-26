@@ -18,20 +18,17 @@ import SwiftUI
 struct NotchView: View {
     var activities: [LiveActivityCoordinator.Resolved]
     var layout: NotchLayout
+    /// True while the cursor sits inside the (slop-padded)
+    /// island rect — supplied by `NotchHost`'s global mouse
+    /// monitor since the panel itself is click-through.
+    var isHovered: Bool = false
 
-    /// Width past the notch's edges on each side, measured to
-    /// the OUTER edge of the side elements (the punched-out
-    /// corners). The pill body itself is narrower by one
-    /// `punchRadius` on each end.
-    private let sidePad: CGFloat = 40
-    /// Radius of the circle punched out of each side element.
-    /// Equal to the visible concave radius at the top corners.
-    private let punchRadius: CGFloat = 12
-    /// Regular convex radius at the pill body's bottom corners.
-    /// Roughly 1/3 of the menu-bar height — chunky enough to
-    /// read as "rounded" rather than "almost square," matching
-    /// the iOS Dynamic Island's deep bottom corners.
-    private let bottomCornerRadius: CGFloat = 10
+    /// Default minimum sidePad — see `Geometry.sidePad`.
+    private var sidePad: CGFloat { Geometry.sidePad }
+    private var punchRadius: CGFloat { Geometry.punchRadius }
+    private var bottomCornerRadius: CGFloat { Geometry.bottomCornerRadius }
+    private var contentInset: CGFloat { Geometry.contentInset }
+    private var notchClearance: CGFloat { Geometry.notchClearance }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -46,30 +43,17 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Inset between the pill's outer edge and the leading/
-    /// trailing content. 22pt clears the 12pt concave punch
-    /// plus another 10pt of breathing room.
-    private let contentInset: CGFloat = 22
-    /// Minimum gap between content and the physical notch
-    /// cutout so the icon/text never sit under the camera area.
-    private let notchClearance: CGFloat = 12
-
     @ViewBuilder
     private func island(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        let notchW = layout.notchTrailingX - layout.notchLeadingX
+        let frame = Geometry.islandFrame(
+            for: a, layout: layout, expanded: isHovered)
+        let totalWidth = frame.width
+        let totalHeight = frame.height
+        let centerX = frame.midX
 
-        // Measure the actual on-screen widths of leading and
-        // trailing content. Pill stays SYMMETRIC about the
-        // notch's centre, so we size each "wing" to the wider
-        // of the two so both fit clearly outside the cutout.
-        let leadW = leadingWidth(for: a)
-        let trailW = trailingWidth(for: a)
-        let halfContent = max(leadW, trailW) + contentInset + notchClearance
-        let totalWidth = max(notchW + sidePad * 2, halfContent * 2 + notchW)
-        let totalHeight = layout.menuBarHeight
-        let centerX = layout.notchCenterX
+        let notchW = layout.notchTrailingX - layout.notchLeadingX
 
         ZStack {
             IslandShape(
@@ -79,11 +63,11 @@ struct NotchView: View {
             .fill(Color.black)
             .frame(width: totalWidth, height: totalHeight)
 
-            // Icon pushed to the FAR LEFT of the pill, text to
-            // the FAR RIGHT — the notch's hardware cutout sits
-            // between them in the middle. The dynamic
-            // `totalWidth` above guarantees each one clears the
-            // cutout edges.
+            // Same compact row in both states. The pill just
+            // gets wider on hover so the content has more
+            // breathing room — vertical card expansion comes
+            // back in a later phase, when the suite publishers
+            // carry richer payloads worth showing inside it.
             HStack(spacing: 0) {
                 leadingContent(for: a)
                 Spacer(minLength: notchW + notchClearance * 2)
@@ -94,45 +78,11 @@ struct NotchView: View {
         }
         .frame(width: totalWidth, height: totalHeight)
         .position(x: centerX, y: totalHeight / 2)
+        .animation(.spring(response: 0.34,
+                           dampingFraction: 0.82),
+                   value: isHovered)
     }
 
-    /// Predicted on-screen width of the leading slot. Used to
-    /// size the pill before SwiftUI lays the HStack out — we
-    /// can't query measured size up front without GeometryReader
-    /// gymnastics, and a quick predictor keeps the layout one-
-    /// pass with no resize flicker.
-    private func leadingWidth(
-        for a: LiveActivityCoordinator.Resolved
-    ) -> CGFloat {
-        a.compactLeadingImage != nil ? 18 : 0
-    }
-
-    private func trailingWidth(
-        for a: LiveActivityCoordinator.Resolved
-    ) -> CGFloat {
-        if let text = a.compactTrailingText {
-            return Self.measureText(
-                text, size: 13, weight: .semibold)
-        }
-        if a.compactTrailingImage != nil { return 16 }
-        return 0
-    }
-
-    /// Measure a string's drawn width using NSString's typesetting.
-    /// Matches the SwiftUI font we render with — `.system(size:13,
-    /// weight: .semibold, design: .rounded)`.
-    private static func measureText(
-        _ s: String, size: CGFloat, weight: NSFont.Weight
-    ) -> CGFloat {
-        let font = NSFont.systemFont(
-            ofSize: size, weight: weight)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        // +2pt fudge: rounded design glyphs sometimes round
-        // larger than systemFont measures, and we'd rather be
-        // wide than truncated.
-        return ceil((s as NSString).size(
-            withAttributes: attrs).width) + 2
-    }
 
     @ViewBuilder
     private func leadingContent(
@@ -176,6 +126,105 @@ struct NotchView: View {
         rect.fill(using: .sourceAtop)
         tinted.unlockFocus()
         return tinted
+    }
+}
+
+// MARK: - Geometry
+
+/// Shared layout math for the island. The body of `NotchView`
+/// uses it to lay the SwiftUI content out; `NotchHost`'s
+/// hit-test view uses the same numbers to decide whether a
+/// mouse event lands inside the visible pill.
+///
+/// Single source of truth — both sides have to agree on the
+/// pill's bounds or hit-testing drifts from the visible shape.
+enum Geometry {
+    /// Minimum width past the notch's edges on each side. The
+    /// pill grows past this when content demands.
+    static let sidePad: CGFloat = 40
+    /// Radius of the concave outer corner (matches the masking
+    /// circle that lives just outside the pill on each side).
+    static let punchRadius: CGFloat = 12
+    /// Convex radius at the pill body's bottom corners.
+    static let bottomCornerRadius: CGFloat = 10
+    /// Inset between the pill's outer edge and the leading/
+    /// trailing content.
+    static let contentInset: CGFloat = 22
+    /// Minimum gap between content and the physical notch
+    /// cutout so the icon/text never sit under the camera.
+    static let notchClearance: CGFloat = 12
+
+    /// Predicted width of the leading content slot for an
+    /// activity. Mirrors `NotchView.leadingContent`'s sizes.
+    static func leadingWidth(
+        for a: LiveActivityCoordinator.Resolved?
+    ) -> CGFloat {
+        a?.compactLeadingImage != nil ? 18 : 0
+    }
+
+    /// Predicted width of the trailing content slot. Text is
+    /// measured with NSString's typesetting against the same
+    /// font NotchView renders with.
+    static func trailingWidth(
+        for a: LiveActivityCoordinator.Resolved?
+    ) -> CGFloat {
+        guard let a else { return 0 }
+        if let text = a.compactTrailingText {
+            return measureText(
+                text, size: 13, weight: .semibold)
+        }
+        if a.compactTrailingImage != nil { return 16 }
+        return 0
+    }
+
+    /// Each "wing" of the pill grows by this much when the
+    /// cursor is hovering — subtle widening that hints at
+    /// interactivity without changing the island's vertical
+    /// footprint or letting the pill clip the menu bar items
+    /// further away.
+    static let hoverExtraWidth: CGFloat = 60
+
+    /// The visible pill's frame in panel-local coordinates with
+    /// the SwiftUI convention (origin top-left). Width is
+    /// dynamic; height matches the menu bar band. On hover,
+    /// the width grows by `hoverExtraWidth * 2` (one wing on
+    /// each side). Pill is centred on the notch.
+    static func islandFrame(
+        for a: LiveActivityCoordinator.Resolved?,
+        layout: NotchLayout,
+        expanded: Bool = false
+    ) -> CGRect {
+        let notchW = layout.notchTrailingX - layout.notchLeadingX
+        let leadW = leadingWidth(for: a)
+        let trailW = trailingWidth(for: a)
+        let halfContent = max(leadW, trailW)
+            + contentInset + notchClearance
+        var totalWidth = max(
+            notchW + sidePad * 2,
+            halfContent * 2 + notchW)
+        if expanded {
+            totalWidth += hoverExtraWidth * 2
+        }
+        let totalHeight = layout.menuBarHeight
+        let leftEdge = layout.notchCenterX - totalWidth / 2
+        return CGRect(
+            x: leftEdge, y: 0,
+            width: totalWidth, height: totalHeight)
+    }
+
+    /// Measure a string's drawn width using NSString's
+    /// typesetting. Matches `Text(.system(size:13, weight:
+    /// .semibold, design: .rounded))`.
+    private static func measureText(
+        _ s: String, size: CGFloat, weight: NSFont.Weight
+    ) -> CGFloat {
+        let font = NSFont.systemFont(
+            ofSize: size, weight: weight)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        // +2pt fudge: rounded design glyphs sometimes round
+        // larger than systemFont measures.
+        return ceil((s as NSString).size(
+            withAttributes: attrs).width) + 2
     }
 }
 
