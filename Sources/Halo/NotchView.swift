@@ -113,9 +113,12 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         if let text = a.compactTrailingText {
+            // Match the system menu-bar clock — same size,
+            // regular weight, default (non-rounded) design.
+            // Was 13pt semibold rounded which read as
+            // emphasised next to the rest of the bar.
             Text(text)
-                .font(.system(size: 13, weight: .semibold,
-                              design: .rounded))
+                .font(.system(size: 13))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
@@ -182,8 +185,7 @@ enum Geometry {
     ) -> CGFloat {
         guard let a else { return 0 }
         if let text = a.compactTrailingText {
-            return measureText(
-                text, size: 13, weight: .semibold)
+            return measureText(text, size: 13)
         }
         if a.compactTrailingImage != nil { return 16 }
         return 0
@@ -229,16 +231,13 @@ enum Geometry {
     }
 
     /// Measure a string's drawn width using NSString's
-    /// typesetting. Matches `Text(.system(size:13, weight:
-    /// .semibold, design: .rounded))`.
+    /// typesetting. Matches `Text(.system(size: 13))` — same
+    /// regular-weight system font the menu-bar clock uses.
     private static func measureText(
-        _ s: String, size: CGFloat, weight: NSFont.Weight
+        _ s: String, size: CGFloat
     ) -> CGFloat {
-        let font = NSFont.systemFont(
-            ofSize: size, weight: weight)
+        let font = NSFont.systemFont(ofSize: size)
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        // +2pt fudge: rounded design glyphs sometimes round
-        // larger than systemFont measures.
         return ceil((s as NSString).size(
             withAttributes: attrs).width) + 2
     }
