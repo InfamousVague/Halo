@@ -572,11 +572,6 @@ enum Geometry {
         return 0
     }
 
-    /// Minimum width an expanded card grows to (regardless of
-    /// the compact pill's content width). Wide enough for the
-    /// 3-row Stats layout or a multi-device AirPods layout.
-    static let expandedMinWidth: CGFloat = 320
-
     /// Per-activity extra height for the expanded card. Sums
     /// the activity's intrinsic content height + the card's
     /// internal padding (12 top + 14 bottom = 26pt). Lets the
@@ -619,9 +614,11 @@ enum Geometry {
     /// content — long trailing text doesn't force an empty
     /// left wing to match, and vice versa.
     ///
-    /// When `expanded`, the island grows DOWNWARD into a card
-    /// (+`expandedExtraHeight`) and widens symmetrically to at
-    /// least `expandedMinWidth` so the rich content has room.
+    /// When `expanded`, the island grows **straight down** —
+    /// same width and same horizontal position as the compact
+    /// pill, just taller by `expandedExtraHeight`. The compact
+    /// row fades to opacity 0 but keeps its layout space so
+    /// the pill doesn't shift sideways on hover.
     static func islandFrame(
         for a: LiveActivityCoordinator.Resolved?,
         layout: NotchLayout,
@@ -636,24 +633,16 @@ enum Geometry {
         let rightHalf = max(
             trailW + contentInset + notchClearance,
             sidePad)
-        var totalWidth = leftHalf + notchW + rightHalf
+        let totalWidth = leftHalf + notchW + rightHalf
         var totalHeight = layout.menuBarHeight + 1
         if expanded {
-            // Symmetric extra width centred on the notch so
-            // the card grows evenly on both sides.
-            let needed = max(expandedMinWidth, totalWidth)
-            totalWidth = needed
             totalHeight += expandedExtraHeight(for: a)
         }
-        // Centre on the notch when expanded (the card needs
-        // symmetric room for the widget grid), otherwise stay
-        // asymmetric so compact text alignment looks right.
-        let leftEdge: CGFloat
-        if expanded {
-            leftEdge = layout.notchCenterX - totalWidth / 2
-        } else {
-            leftEdge = layout.notchLeadingX - leftHalf
-        }
+        // Always asymmetric, anchored to the notch's leading
+        // edge. The expanded card lives entirely inside the
+        // same horizontal footprint as the compact row, so no
+        // sideways jump on hover.
+        let leftEdge = layout.notchLeadingX - leftHalf
         return CGRect(
             x: leftEdge, y: 0,
             width: totalWidth, height: totalHeight)
