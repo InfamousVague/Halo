@@ -28,7 +28,10 @@ struct NotchView: View {
     /// Equal to the visible concave radius at the top corners.
     private let punchRadius: CGFloat = 12
     /// Regular convex radius at the pill body's bottom corners.
-    private let bottomCornerRadius: CGFloat = 4
+    /// Roughly 1/3 of the menu-bar height — chunky enough to
+    /// read as "rounded" rather than "almost square," matching
+    /// the iOS Dynamic Island's deep bottom corners.
+    private let bottomCornerRadius: CGFloat = 10
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -43,14 +46,30 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Inset between the pill's outer edge and the leading/
+    /// trailing content. 22pt clears the 12pt concave punch
+    /// plus another 10pt of breathing room.
+    private let contentInset: CGFloat = 22
+    /// Minimum gap between content and the physical notch
+    /// cutout so the icon/text never sit under the camera area.
+    private let notchClearance: CGFloat = 12
+
     @ViewBuilder
     private func island(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        let totalWidth =
-            (layout.notchTrailingX - layout.notchLeadingX) + sidePad * 2
+        let notchW = layout.notchTrailingX - layout.notchLeadingX
+
+        // Measure the actual on-screen widths of leading and
+        // trailing content. Pill stays SYMMETRIC about the
+        // notch's centre, so we size each "wing" to the wider
+        // of the two so both fit clearly outside the cutout.
+        let leadW = leadingWidth(for: a)
+        let trailW = trailingWidth(for: a)
+        let halfContent = max(leadW, trailW) + contentInset + notchClearance
+        let totalWidth = max(notchW + sidePad * 2, halfContent * 2 + notchW)
         let totalHeight = layout.menuBarHeight
-        let leftEdge = layout.notchLeadingX - sidePad
+        let centerX = layout.notchCenterX
 
         ZStack {
             IslandShape(
@@ -60,22 +79,59 @@ struct NotchView: View {
             .fill(Color.black)
             .frame(width: totalWidth, height: totalHeight)
 
-            // Content centred vertically inside the menu-bar
-            // band. Icon pushed to the FAR LEFT of the pill,
-            // text to the FAR RIGHT — the notch's hardware
-            // cutout sits between them in the middle.
+            // Icon pushed to the FAR LEFT of the pill, text to
+            // the FAR RIGHT — the notch's hardware cutout sits
+            // between them in the middle. The dynamic
+            // `totalWidth` above guarantees each one clears the
+            // cutout edges.
             HStack(spacing: 0) {
                 leadingContent(for: a)
-                Spacer(minLength: 0)
+                Spacer(minLength: notchW + notchClearance * 2)
                 trailingContent(for: a)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, contentInset)
             .frame(width: totalWidth, height: totalHeight)
         }
         .frame(width: totalWidth, height: totalHeight)
-        .position(
-            x: leftEdge + totalWidth / 2,
-            y: totalHeight / 2)
+        .position(x: centerX, y: totalHeight / 2)
+    }
+
+    /// Predicted on-screen width of the leading slot. Used to
+    /// size the pill before SwiftUI lays the HStack out — we
+    /// can't query measured size up front without GeometryReader
+    /// gymnastics, and a quick predictor keeps the layout one-
+    /// pass with no resize flicker.
+    private func leadingWidth(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> CGFloat {
+        a.compactLeadingImage != nil ? 18 : 0
+    }
+
+    private func trailingWidth(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> CGFloat {
+        if let text = a.compactTrailingText {
+            return Self.measureText(
+                text, size: 13, weight: .semibold)
+        }
+        if a.compactTrailingImage != nil { return 16 }
+        return 0
+    }
+
+    /// Measure a string's drawn width using NSString's typesetting.
+    /// Matches the SwiftUI font we render with — `.system(size:13,
+    /// weight: .semibold, design: .rounded)`.
+    private static func measureText(
+        _ s: String, size: CGFloat, weight: NSFont.Weight
+    ) -> CGFloat {
+        let font = NSFont.systemFont(
+            ofSize: size, weight: weight)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        // +2pt fudge: rounded design glyphs sometimes round
+        // larger than systemFont measures, and we'd rather be
+        // wide than truncated.
+        return ceil((s as NSString).size(
+            withAttributes: attrs).width) + 2
     }
 
     @ViewBuilder

@@ -74,7 +74,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     else { self?.notchHost.disable() }
                     HaloSettings.setEnabled(on)
                 }
-            )
+            ),
+            volumeBinding: Self.publisherBinding(
+                host: self,
+                get: { HaloSettings.volumeHUDEnabled },
+                set: HaloSettings.setVolumeHUDEnabled),
+            brightnessBinding: Self.publisherBinding(
+                host: self,
+                get: { HaloSettings.brightnessHUDEnabled },
+                set: HaloSettings.setBrightnessHUDEnabled),
+            nowPlayingBinding: Self.publisherBinding(
+                host: self,
+                get: { HaloSettings.nowPlayingEnabled },
+                set: HaloSettings.setNowPlayingEnabled),
+            airpodsBinding: Self.publisherBinding(
+                host: self,
+                get: { HaloSettings.airpodsEnabled },
+                set: HaloSettings.setAirpodsEnabled)
         )
         let hc = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hc)
@@ -86,14 +102,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    /// Boilerplate-free Binding factory for the per-publisher
+    /// toggles. The setter writes to HaloSettings and then
+    /// restarts publishers so the change takes effect immediately
+    /// (the alternative is asking the user to disable/re-enable
+    /// Halo, which is awful).
+    private static func publisherBinding(
+        host: AppDelegate,
+        get: @escaping @Sendable () -> Bool,
+        set: @escaping @Sendable (Bool) -> Void
+    ) -> Binding<Bool> {
+        Binding<Bool>(
+            get: get,
+            set: { [weak host] on in
+                set(on)
+                host?.notchHost.restartPublishers()
+            }
+        )
+    }
 }
 
-/// Small settings popover. Will grow as Halo gains features —
-/// for phase 0 it's just the master toggle + the quit button so
-/// the user has a real way out of the agent.
+/// Settings window. Master "Show the island" toggle on top, then
+/// a per-publisher list so users can turn off any feature that
+/// duplicates a tool they already run (e.g. someone with a
+/// MediaMate-style HUD already installed switches ours off).
 private struct SettingsView: View {
     let onQuit: () -> Void
     @Binding var isEnabledBinding: Bool
+    @Binding var volumeBinding: Bool
+    @Binding var brightnessBinding: Bool
+    @Binding var nowPlayingBinding: Bool
+    @Binding var airpodsBinding: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -108,7 +148,26 @@ private struct SettingsView: View {
             }
             Divider()
             Toggle("Show the island", isOn: $isEnabledBinding)
+                .font(.system(size: 12, weight: .semibold))
+
+            Divider()
+            Text("FEATURES")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(1.5)
+                .foregroundStyle(.secondary)
+            Toggle("Volume HUD", isOn: $volumeBinding)
                 .font(.system(size: 12))
+                .disabled(!isEnabledBinding)
+            Toggle("Brightness HUD", isOn: $brightnessBinding)
+                .font(.system(size: 12))
+                .disabled(!isEnabledBinding)
+            Toggle("Now Playing", isOn: $nowPlayingBinding)
+                .font(.system(size: 12))
+                .disabled(!isEnabledBinding)
+            Toggle("AirPods battery", isOn: $airpodsBinding)
+                .font(.system(size: 12))
+                .disabled(!isEnabledBinding)
+
             Divider()
             HStack {
                 Spacer()
@@ -117,6 +176,6 @@ private struct SettingsView: View {
             }
         }
         .padding(14)
-        .frame(width: 240)
+        .frame(width: 260)
     }
 }

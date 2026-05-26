@@ -54,6 +54,15 @@ final class LiveActivityCoordinator {
     @ObservationIgnored private let payloadTTL: TimeInterval = 30
     @ObservationIgnored private var pollTimer: Timer?
 
+    /// In-process payloads — Halo's own publishers (volume,
+    /// brightness, now-playing) write here directly instead of
+    /// round-tripping through the file store. Updates are
+    /// instant; no 1 Hz disk poll, no TTL drift.
+    @ObservationIgnored private var inProcess: [String: Resolved] = [:]
+    /// Expiry dates for transient in-process payloads (volume
+    /// HUDs etc.). `.distantFuture` for steady-state payloads.
+    @ObservationIgnored private var inProcessExpiry: [String: Date] = [:]
+
     func start() {
         pollOnce()
         pollTimer = Timer.scheduledTimer(
@@ -68,18 +77,55 @@ final class LiveActivityCoordinator {
         pollTimer = nil
     }
 
+    // MARK: - In-process injection
+
+    /// Publish a payload owned by an in-process publisher (volume
+    /// HUD, music now-playing, etc.). `ttl` is measured from now;
+    /// pass `.infinity` for steady-state payloads. Re-publishing
+    /// the same `id` replaces the previous payload and resets
+    /// the expiry clock.
+    func inject(
+        _ payload: Resolved,
+        ttl: TimeInterval = .infinity
+    ) {
+        inProcess[payload.id] = payload
+        inProcessExpiry[payload.id] =
+            ttl.isFinite ? Date().addingTimeInterval(ttl) : .distantFuture
+        pollOnce()
+    }
+
+    /// Withdraw an in-process payload (publisher went idle).
+    func clear(id: String) {
+        inProcess.removeValue(forKey: id)
+        inProcessExpiry.removeValue(forKey: id)
+        pollOnce()
+    }
+
     // MARK: - Polling
 
     private func pollOnce() {
-        let collected = readSharedStore()
-            .sorted {
-                // Stable sort: priority desc, then id asc — ties
-                // don't flicker frame-to-frame.
-                if $0.priority != $1.priority {
-                    return $0.priority > $1.priority
-                }
-                return $0.id < $1.id
+        // Drop expired in-process payloads (e.g. the 2s volume
+        // HUD that has run its course).
+        let now = Date()
+        for (id, expiry) in inProcessExpiry where expiry < now {
+            inProcess.removeValue(forKey: id)
+            inProcessExpiry.removeValue(forKey: id)
+        }
+        // Merge: file-store payloads + in-process payloads.
+        // In-process wins on id collision (Halo's own publisher
+        // is authoritative over a stale file on disk).
+        var byId: [String: Resolved] = [:]
+        for r in readSharedStore() { byId[r.id] = r }
+        for (id, r) in inProcess { byId[id] = r }
+
+        let collected = byId.values.sorted {
+            // Stable sort: priority desc, then id asc — ties
+            // don't flicker frame-to-frame.
+            if $0.priority != $1.priority {
+                return $0.priority > $1.priority
             }
+            return $0.id < $1.id
+        }
         if collected != activities {
             NSLog("[halo] activities changed: \(activities.count) → \(collected.count) (top=\(collected.first?.id ?? "—"))")
             activities = collected
@@ -131,7 +177,10 @@ final class LiveActivityCoordinator {
     }
 
     /// Resolve an SF Symbol name to a tintable template NSImage.
-    private static func symbolImage(_ name: String?) -> NSImage? {
+    /// Exposed so in-process publishers (`VolumePublisher` etc.)
+    /// can build payloads without each importing AppKit symbols
+    /// piecemeal.
+    static func symbolImage(_ name: String?) -> NSImage? {
         guard let name, !name.isEmpty,
               let img = NSImage(systemSymbolName: name,
                                 accessibilityDescription: nil)
@@ -139,4 +188,21 @@ final class LiveActivityCoordinator {
         img.isTemplate = true
         return img
     }
+}
+
+// MARK: - Publisher protocol
+
+/// In-process source of live-activity payloads — Halo's built-in
+/// system integrations (volume, brightness, now-playing) all
+/// adopt this. External apps still go through
+/// `SuiteLiveActivityStore` (the on-disk JSON path).
+@MainActor
+protocol HaloPublisher: AnyObject {
+    /// Slot id under which this publisher's payload appears.
+    /// Convention: `halo.<feature>` (e.g. `halo.volume`).
+    var id: String { get }
+    /// Begin listening for the underlying system event.
+    func start()
+    /// Stop listening; clear any active payload.
+    func stop()
 }

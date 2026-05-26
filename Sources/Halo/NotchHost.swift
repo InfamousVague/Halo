@@ -20,6 +20,11 @@ final class NotchHost: NSObject {
     private var hostingController: NSHostingController<NotchHostRoot>?
     private var screenObserver: NSObjectProtocol?
 
+    /// In-process feature publishers (volume, brightness, music,
+    /// AirPods). Each starts/stops with the host so toggling
+    /// Halo via settings shuts every system listener down too.
+    private var publishers: [HaloPublisher] = []
+
     private(set) var isEnabled: Bool = false
 
     func enable() {
@@ -27,6 +32,7 @@ final class NotchHost: NSObject {
         isEnabled = true
         rebuildPanel()
         coordinator.start()
+        startPublishers()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
@@ -42,10 +48,46 @@ final class NotchHost: NSObject {
             NotificationCenter.default.removeObserver(o)
             screenObserver = nil
         }
+        stopPublishers()
         coordinator.stop()
         panel?.orderOut(nil)
         panel = nil
         hostingController = nil
+    }
+
+    private func startPublishers() {
+        // Volume HUD — gated by HaloSettings so users can opt out
+        // (some pair Halo with an existing volume HUD tool).
+        if HaloSettings.volumeHUDEnabled {
+            let v = VolumePublisher(coordinator: coordinator)
+            v.start()
+            publishers.append(v)
+        }
+        if HaloSettings.nowPlayingEnabled {
+            let n = NowPlayingPublisher(coordinator: coordinator)
+            n.start()
+            publishers.append(n)
+        }
+        if HaloSettings.brightnessHUDEnabled {
+            let b = BrightnessPublisher(coordinator: coordinator)
+            b.start()
+            publishers.append(b)
+        }
+    }
+
+    private func stopPublishers() {
+        for p in publishers { p.stop() }
+        publishers.removeAll()
+    }
+
+    /// Tear down all publishers and re-create only the ones the
+    /// user currently has enabled. Called when a setting toggle
+    /// flips; cheaper than per-publisher start/stop wiring and
+    /// guarantees no orphan listeners.
+    func restartPublishers() {
+        guard isEnabled else { return }
+        stopPublishers()
+        startPublishers()
     }
 
     private func rebuildPanel() {
