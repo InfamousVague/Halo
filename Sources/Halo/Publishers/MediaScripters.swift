@@ -19,28 +19,28 @@ import AppKit
 @MainActor
 enum SpotifyScripter {
     static func readNowPlaying() -> LiveActivityCoordinator.MediaInfo? {
-        guard isRunning("com.spotify.client") else { return nil }
-        let script = """
+        let running = isRunning("com.spotify.client")
+        NowPlayingDebugLog.append(
+            "\(Date()) Spotify isRunning=\(running)\n")
+        guard running else { return nil }
+        // Single-line script body so we don't depend on
+        // AppleScript line-continuations (the `¬` character
+        // gets eaten by Swift's literal handling in some
+        // encodings, surfacing as a parse error at the next
+        // token).
+        let script = #"""
         tell application id "com.spotify.client"
             if it is running then
                 try
                     set t to current track
-                    set st to (player state as text)
-                    set pos to player position
-                    return (name of t) & "|||" ¬
-                        & (artist of t) & "|||" ¬
-                        & (album of t) & "|||" ¬
-                        & (artwork url of t) & "|||" ¬
-                        & st & "|||" ¬
-                        & pos & "|||" ¬
-                        & (duration of t)
+                    return (name of t as text) & "|||" & (artist of t as text) & "|||" & (album of t as text) & "|||" & (artwork url of t as text) & "|||" & (player state as text) & "|||" & (player position as text) & "|||" & (duration of t as text)
                 on error
                     return ""
                 end try
             end if
         end tell
         return ""
-        """
+        """#
         guard let raw = runAppleScript(script),
               !raw.isEmpty else { return nil }
         let parts = raw.components(separatedBy: "|||")
@@ -102,26 +102,19 @@ enum SpotifyScripter {
 enum MusicScripter {
     static func readNowPlaying() -> LiveActivityCoordinator.MediaInfo? {
         guard isRunning("com.apple.Music") else { return nil }
-        let script = """
+        let script = #"""
         tell application id "com.apple.Music"
             if it is running then
                 try
                     set t to current track
-                    set st to (player state as text)
-                    set pos to player position
-                    return (name of t) & "|||" ¬
-                        & (artist of t) & "|||" ¬
-                        & (album of t) & "|||" ¬
-                        & st & "|||" ¬
-                        & pos & "|||" ¬
-                        & (duration of t)
+                    return (name of t as text) & "|||" & (artist of t as text) & "|||" & (album of t as text) & "|||" & (player state as text) & "|||" & (player position as text) & "|||" & (duration of t as text)
                 on error
                     return ""
                 end try
             end if
         end tell
         return ""
-        """
+        """#
         guard let raw = runAppleScript(script),
               !raw.isEmpty else { return nil }
         let parts = raw.components(separatedBy: "|||")
@@ -178,7 +171,8 @@ private func runAppleScript(_ source: String) -> String? {
     var err: NSDictionary?
     let result = script.executeAndReturnError(&err)
     if let err {
-        NSLog("[halo] AppleScript error: \(err)")
+        NowPlayingDebugLog.append(
+            "\(Date()) AppleScript err: \(err)\n")
         return nil
     }
     return result.stringValue

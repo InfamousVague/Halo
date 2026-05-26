@@ -7,8 +7,8 @@
   <key>CFBundleIdentifier</key><string>com.mattssoftware.halo</string>
   <key>CFBundleExecutable</key><string>Halo</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.9</string>
-  <key>CFBundleVersion</key><string>0.1.9</string>
+  <key>CFBundleShortVersionString</key><string>0.1.10</string>
+  <key>CFBundleVersion</key><string>0.1.10</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <!--
     LSUIElement = true makes Halo an agent: no Dock icon, no
@@ -25,5 +25,15 @@
   -->
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Halo reads AirPods battery levels from nearby Bluetooth advertisements to show them in the island.</string>
+  <!--
+    Required so macOS knows to prompt the user (and show a
+    rationale) the first time Halo asks Spotify / Music for
+    track info. Without this string + the matching
+    com.apple.security.automation.apple-events entitlement,
+    AppleEvents are silently denied under the hardened
+    runtime and the Now Playing card stays empty.
+  -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Halo asks Spotify and Music for the currently-playing track so the island can show it with album cover, scrubber, and playback controls.</string>
 </dict>
 </plist>

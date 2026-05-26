@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 APP="$ROOT/Halo.app"
 SRC_ICON="$ROOT/art/AppIcon-source.png"
-VERSION="0.1.9"
+VERSION="0.1.10"
 SIGN_IDENTITY="${SIGN_IDENTITY:-0948896DC970503ADEF5B5070E0BB3E9D9047757}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-Notary}"
 DMG="$ROOT/Halo-$VERSION.dmg"
@@ -59,10 +59,21 @@ if security find-identity -v -p codesigning 2>/dev/null \
     --sign "$SIGN_IDENTITY" "$APP"
   echo "✓ Built + Developer ID signed $APP"
 else
+  # Ad-hoc path skips --options=runtime — hardened runtime +
+  # ad-hoc signature on the host AND the dylib triggers dyld's
+  # Team-ID match check, and ad-hoc has no team ID either side
+  # so the load fails. Hardened runtime is only required for
+  # notarization (handled by the Developer-ID branch above);
+  # for local dev we apply the AppleEvents entitlement without
+  # it. macOS still prompts the user before letting AppleScript
+  # talk to Spotify / Music because of NSAppleEventsUsage
+  # Description in Info.plist.
   if [ -f "$APP/Contents/Frameworks/libSuiteKit.dylib" ]; then
     codesign --force --sign - "$APP/Contents/Frameworks/libSuiteKit.dylib"
   fi
-  codesign --force --deep --sign - "$APP"
+  codesign --force \
+    --entitlements "$ROOT/Sources/Halo/Halo.entitlements" \
+    --sign - "$APP"
   echo "⚠ signing identity not found — ad-hoc signed (local only)"
 fi
 
