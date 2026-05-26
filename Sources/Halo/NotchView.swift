@@ -179,18 +179,16 @@ enum Geometry {
         return 0
     }
 
-    /// Each "wing" of the pill grows by this much when the
-    /// cursor is hovering — subtle widening that hints at
-    /// interactivity without changing the island's vertical
-    /// footprint or letting the pill clip the menu bar items
-    /// further away.
-    static let hoverExtraWidth: CGFloat = 60
-
     /// The visible pill's frame in panel-local coordinates with
-    /// the SwiftUI convention (origin top-left). Width is
-    /// dynamic; height matches the menu bar band. On hover,
-    /// the width grows by `hoverExtraWidth * 2` (one wing on
-    /// each side). Pill is centred on the notch.
+    /// the SwiftUI convention (origin top-left). The pill's
+    /// left and right wings size INDEPENDENTLY to their own
+    /// content — long trailing text doesn't force an empty
+    /// left wing to match, and vice versa. The pill is no
+    /// longer strictly centred on the notch; it grows
+    /// asymmetrically into whichever side has more text.
+    ///
+    /// Both wings still respect `sidePad` as a minimum so a
+    /// tiny icon doesn't leave the wing flush with the notch.
     static func islandFrame(
         for a: LiveActivityCoordinator.Resolved?,
         layout: NotchLayout,
@@ -199,19 +197,22 @@ enum Geometry {
         let notchW = layout.notchTrailingX - layout.notchLeadingX
         let leadW = leadingWidth(for: a)
         let trailW = trailingWidth(for: a)
-        let halfContent = max(leadW, trailW)
-            + contentInset + notchClearance
-        var totalWidth = max(
-            notchW + sidePad * 2,
-            halfContent * 2 + notchW)
-        if expanded {
-            totalWidth += hoverExtraWidth * 2
-        }
-        // +1pt overlap onto the menu-bar bottom border — the
-        // pill reads as flush with the menu bar otherwise the
-        // anti-aliased boundary leaves a 1px seam.
+        // Per-side minimum wing width — covers content +
+        // padding to the inner side of the notch.
+        let leftHalf = max(
+            leadW + contentInset + notchClearance,
+            sidePad)
+        let rightHalf = max(
+            trailW + contentInset + notchClearance,
+            sidePad)
+        let totalWidth = leftHalf + notchW + rightHalf
+        // +1pt overlap onto the menu-bar bottom border so the
+        // pill reads as flush with the menu bar — otherwise
+        // anti-aliasing leaves a 1px seam.
         let totalHeight = layout.menuBarHeight + 1
-        let leftEdge = layout.notchCenterX - totalWidth / 2
+        // leftEdge in panel coords = notch left minus our
+        // left-wing width.
+        let leftEdge = layout.notchLeadingX - leftHalf
         return CGRect(
             x: leftEdge, y: 0,
             width: totalWidth, height: totalHeight)
