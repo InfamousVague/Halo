@@ -169,12 +169,24 @@ final class NowPlayingPublisher: HaloPublisher {
     private func inject(
         _ media: LiveActivityCoordinator.MediaInfo
     ) {
-        let truncated = Self.truncate(media.title, max: 24)
+        // Compact label: position / duration when we know
+        // both — the album cover already identifies the
+        // track, and a live "1:23 / 3:45" gives the user a
+        // scrubber-y readout right in the menu bar. Falls
+        // back to the truncated title for sources that don't
+        // surface position (rare on AppleScript paths).
+        let label: String
+        if let pos = media.positionSeconds,
+           let dur = media.durationSeconds, dur > 0 {
+            label = "\(Self.formatTime(pos)) / \(Self.formatTime(dur))"
+        } else {
+            label = Self.truncate(media.title, max: 24)
+        }
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
                 LiveActivityCoordinator.symbolImage("music.note"),
-            compactTrailingText: truncated,
+            compactTrailingText: label,
             compactTrailingImage: nil,
             tint: .white,
             priority: 60,
@@ -185,6 +197,16 @@ final class NowPlayingPublisher: HaloPublisher {
     private static func truncate(_ s: String, max: Int) -> String {
         if s.count <= max { return s }
         return s.prefix(max - 1) + "…"
+    }
+
+    /// Seconds → "M:SS" — same shape Spotify / Music render
+    /// the scrubber labels with, so the compact pill matches
+    /// the source apps' clocks at a glance.
+    private static func formatTime(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
     }
 }
 

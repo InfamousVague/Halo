@@ -30,12 +30,13 @@ struct ExpandedCard: View {
             }
         }
         // Match the compact row's horizontal inset
-        // (`Geometry.contentInset`, 22pt) so icons in the
-        // expanded layout line up vertically with the compact
-        // row's leading icon.
+        // (`Geometry.contentInset`, 22pt) on every side so
+        // content has equal breathing room — the bottom was
+        // 14pt before, which read tighter than the 22pt
+        // wings.
         .padding(.horizontal, Geometry.contentInset)
         .padding(.top, 12)
-        .padding(.bottom, 14)
+        .padding(.bottom, Geometry.contentInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
