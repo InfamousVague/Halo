@@ -366,26 +366,15 @@ struct NotchView: View {
         }
     }
 
-    /// Off-white tinted by the publisher's brand colour — used
-    /// for the leading icon, the trailing text, and the time
-    /// read-out in the expanded music card so each pill picks
-    /// up a hint of its identity (Espresso a creamy tan,
-    /// Spotify a pale green, etc.) without losing the readable
-    /// near-white text style.
+    /// Colour used for the leading icon, the trailing text,
+    /// and the time read-out in the expanded music card. Just
+    /// the publisher's brand colour straight up — Spotify green
+    /// is *the* Spotify green, Apple Music red is *the* Apple
+    /// Music red, Espresso brown is the espresso brown.
     static func pillTextColor(
         for a: LiveActivityCoordinator.Resolved
     ) -> Color {
-        let brand = accentColor(for: a)
-        let ns = NSColor(brand)
-            .usingColorSpace(.deviceRGB) ?? .white
-        // 25% brand mixed into white. Subtle by design — the
-        // pill should read as "near white with a hue," not
-        // "coloured text."
-        let amount: CGFloat = 0.25
-        return Color(
-            red: 1.0 - amount * (1.0 - ns.redComponent),
-            green: 1.0 - amount * (1.0 - ns.greenComponent),
-            blue: 1.0 - amount * (1.0 - ns.blueComponent))
+        accentColor(for: a)
     }
 
     private static func brandColor(forID id: String) -> Color? {
