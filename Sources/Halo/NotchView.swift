@@ -685,19 +685,6 @@ private struct ScreenAccentTrace: Shape {
         // Both branches start at the bottom-centre of the pill.
         p.move(to: CGPoint(x: islandFrame.midX, y: bottomY))
 
-        // The horizontal top-edge segment sits 1pt below the
-        // screen's y=0 because the device's curved bezel
-        // otherwise eats most of a line drawn right at the
-        // top: half goes off-screen and the rest falls inside
-        // the bezel falloff. The contour still meets the pill
-        // silhouette exactly at the wing's top corner (y=0) —
-        // a short cubic-bezier chamfer at each wing corner
-        // smooths the 1pt descent into the horizontal segment
-        // with horizontal tangents at both ends, so the join
-        // reads as one continuous line rather than an L-bend.
-        let edgeDrop: CGFloat = 1
-        let chamfer: CGFloat = 12
-
         switch side {
         case .right:
             // Bottom edge → entry point of the rounded corner.
@@ -717,7 +704,6 @@ private struct ScreenAccentTrace: Shape {
             // Right concave arc: west → north through the NW
             // quadrant of the masking circle that lives just
             // outside the pill at (frame.maxX, topY + pr).
-            // Exits at (frame.maxX, topY) heading east.
             p.addArc(
                 center: CGPoint(x: islandFrame.maxX,
                                 y: topY + pr),
@@ -725,20 +711,11 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(180),
                 endAngle: .degrees(270),
                 clockwise: false)
-            // Smooth chamfer that drops 1pt over `chamfer` pt
-            // with horizontal tangents at both ends, so the
-            // concave arc → chamfer → horizontal line read as
-            // one continuous curve.
-            p.addCurve(
-                to: CGPoint(x: islandFrame.maxX + chamfer,
-                            y: topY + edgeDrop),
-                control1: CGPoint(x: islandFrame.maxX + chamfer / 2,
-                                  y: topY),
-                control2: CGPoint(x: islandFrame.maxX + chamfer / 2,
-                                  y: topY + edgeDrop))
             // Along the screen's top edge to its right side.
-            p.addLine(to: CGPoint(x: screenWidth,
-                                  y: topY + edgeDrop))
+            // Sits right at y=0 — the device bezel clips half
+            // the stroke, but anything fancier (an edge-drop +
+            // chamfer) just trades one visual seam for another.
+            p.addLine(to: CGPoint(x: screenWidth, y: topY))
 
         case .left:
             // Bottom edge → entry point of the rounded corner.
@@ -758,8 +735,7 @@ private struct ScreenAccentTrace: Shape {
             // Left concave arc: east → north through the NE
             // quadrant of the masking circle at
             // (frame.minX, topY + pr). Same orientation as
-            // `IslandShape`'s left wing concave. Exits at
-            // (frame.minX, topY) heading west.
+            // `IslandShape`'s left wing concave.
             p.addArc(
                 center: CGPoint(x: islandFrame.minX,
                                 y: topY + pr),
@@ -767,19 +743,8 @@ private struct ScreenAccentTrace: Shape {
                 startAngle: .degrees(0),
                 endAngle: .degrees(-90),
                 clockwise: true)
-            // Mirror chamfer: drops 1pt over `chamfer` pt
-            // heading west, with horizontal tangents at both
-            // ends so the concave arc → chamfer → horizontal
-            // segment join is continuous.
-            p.addCurve(
-                to: CGPoint(x: islandFrame.minX - chamfer,
-                            y: topY + edgeDrop),
-                control1: CGPoint(x: islandFrame.minX - chamfer / 2,
-                                  y: topY),
-                control2: CGPoint(x: islandFrame.minX - chamfer / 2,
-                                  y: topY + edgeDrop))
             // Along the screen's top edge to its left side.
-            p.addLine(to: CGPoint(x: 0, y: topY + edgeDrop))
+            p.addLine(to: CGPoint(x: 0, y: topY))
         }
         return p
     }
