@@ -134,6 +134,11 @@ final class NotchHost: NSObject {
             a.start()
             publishers.append(a)
         }
+        if HaloSettings.statsEnabled {
+            let s = StatsPublisher(coordinator: coordinator)
+            s.start()
+            publishers.append(s)
+        }
     }
 
     private func stopPublishers() {

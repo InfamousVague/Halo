@@ -102,6 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 host: self,
                 get: { HaloSettings.airpodsEnabled },
                 set: HaloSettings.setAirpodsEnabled),
+            statsBinding: Self.publisherBinding(
+                host: self,
+                get: { HaloSettings.statsEnabled },
+                set: HaloSettings.setStatsEnabled),
             // Suite-slot toggles write to UserDefaults
             // directly inside each row's binding; here we just
             // poke the coordinator to re-poll so the change
@@ -153,6 +157,7 @@ private struct SettingsView: View {
     @Binding var brightnessBinding: Bool
     @Binding var nowPlayingBinding: Bool
     @Binding var airpodsBinding: Bool
+    @Binding var statsBinding: Bool
     let onSuiteToggle: () -> Void
 
     var body: some View {
@@ -169,6 +174,7 @@ private struct SettingsView: View {
                 brightnessBinding: $brightnessBinding,
                 nowPlayingBinding: $nowPlayingBinding,
                 airpodsBinding: $airpodsBinding,
+                statsBinding: $statsBinding,
                 isMasterOn: isEnabledBinding)
                 .tabItem {
                     Label("Features",
@@ -224,6 +230,7 @@ private struct FeaturesTab: View {
     @Binding var brightnessBinding: Bool
     @Binding var nowPlayingBinding: Bool
     @Binding var airpodsBinding: Bool
+    @Binding var statsBinding: Bool
     let isMasterOn: Bool
 
     var body: some View {
@@ -251,6 +258,11 @@ private struct FeaturesTab: View {
                     subtitle: "Battery level of nearby Apple buds",
                     symbol: "airpods",
                     isOn: $airpodsBinding)
+                FeatureRow(
+                    title: "System stats",
+                    subtitle: "CPU / RAM / Disk usage, rotating",
+                    symbol: "cpu",
+                    isOn: $statsBinding)
             }
         }
         .formStyle(.grouped)

@@ -46,6 +46,13 @@ enum HaloSettings {
         UserDefaults.standard.set(on, forKey: "halo.publisher.airpods")
     }
 
+    static var statsEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.stats")
+    }
+    static func setStatsEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.stats")
+    }
+
     // MARK: - Suite apps (external publishers via the file store)
 
     /// Slot id matches the JSON filename the publisher writes
