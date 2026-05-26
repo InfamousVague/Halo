@@ -22,11 +22,39 @@ import SwiftUI
 ///     / progress-bar tracks.
 ///   • Soft surface → `.white.opacity(0.14)` — pill buttons,
 ///     dividers.
+/// `.foregroundStyle(.haloTertiary)` resolves against
+/// `ShapeStyle`, not `Color` — the dot-shorthand lookup checks
+/// the parameter type. Adding the tokens on
+/// `ShapeStyle where Self == Color` lets both `.foregroundStyle`
+/// (ShapeStyle) and direct `Color.haloX` usage work.
+extension ShapeStyle where Self == Color {
+    fileprivate static var haloSecondary: Color {
+        Color.white.opacity(0.62)
+    }
+    fileprivate static var haloTertiary: Color {
+        Color.white.opacity(0.4)
+    }
+    fileprivate static var haloSurfaceFaint: Color {
+        Color.white.opacity(0.08)
+    }
+    fileprivate static var haloSurfaceSoft: Color {
+        Color.white.opacity(0.14)
+    }
+}
+
 extension Color {
-    fileprivate static let haloSecondary = Color.white.opacity(0.62)
-    fileprivate static let haloTertiary = Color.white.opacity(0.4)
-    fileprivate static let haloSurfaceFaint = Color.white.opacity(0.08)
-    fileprivate static let haloSurfaceSoft = Color.white.opacity(0.14)
+    fileprivate static var haloSecondary: Color {
+        Color.white.opacity(0.62)
+    }
+    fileprivate static var haloTertiary: Color {
+        Color.white.opacity(0.4)
+    }
+    fileprivate static var haloSurfaceFaint: Color {
+        Color.white.opacity(0.08)
+    }
+    fileprivate static var haloSurfaceSoft: Color {
+        Color.white.opacity(0.14)
+    }
 }
 
 struct ExpandedCard: View {
