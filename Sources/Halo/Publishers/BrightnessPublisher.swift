@@ -48,9 +48,19 @@ final class BrightnessPublisher: HaloPublisher {
 
     private func tick() {
         let b = readBrightness()
-        // 0.001 tolerance — the API returns small float jitter
-        // even when nothing has changed.
-        if abs(b - lastBrightness) < 0.001 { return }
+        let delta = abs(b - lastBrightness)
+        // Filter auto-brightness ramps. The ambient-light
+        // sensor drifts brightness in tiny ~0.5–2% steps every
+        // few seconds; pressing F1/F2 jumps a discrete
+        // 6.25% (1/16) step. A 5% threshold catches
+        // user-initiated presses without firing the HUD every
+        // time the sensor adjusts to changing room light.
+        guard delta >= 0.05 else {
+            lastBrightness = b  // keep the cache fresh so a
+                                // future big jump compares to
+                                // current, not stale, value
+            return
+        }
         lastBrightness = b
         publishCurrent(b: b)
     }
