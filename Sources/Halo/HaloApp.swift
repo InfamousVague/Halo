@@ -14,20 +14,17 @@ import SwiftUI
 @main
 struct HaloApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    /// Always false — the binding lets us keep the scene so
+    /// SwiftUI bootstraps the AppDelegate adaptor (a Settings-
+    /// only scene won't fire it on macOS 26 / Tahoe), but the
+    /// menu-bar item itself stays hidden. Halo's settings get
+    /// surfaced through the MattsSoftware launcher instead.
+    @State private var menuBarVisible = false
 
     var body: some Scene {
-        // MenuBarExtra gives SwiftUI a concrete scene to render
-        // and reliably bootstraps the AppDelegate adaptor. The
-        // menu is the user's way to open settings + quit; the
-        // island itself is the AppDelegate's NSPanel.
-        MenuBarExtra("Halo", systemImage: "circle.dashed") {
-            Button("Show Settings…") {
-                if let d = NSApp.delegate as? AppDelegate {
-                    d.openSettings()
-                }
-            }
-            Divider()
-            Button("Quit Halo") { NSApp.terminate(nil) }
+        MenuBarExtra("Halo", systemImage: "circle.dashed",
+                     isInserted: $menuBarVisible) {
+            EmptyView()
         }
     }
 }
@@ -50,6 +47,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // settings just calls enable() / disable() again later.
         if HaloSettings.enabled {
             notchHost.enable()
+        }
+
+        // Cross-process settings trigger: the MattsSoftware
+        // launcher posts this distributed notification when the
+        // user clicks the Halo settings entry. We listen on the
+        // system-wide center so the launcher (a separate
+        // process) reaches us without a URL scheme or XPC.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name(
+                "com.mattssoftware.halo.openSettings"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.openSettings() }
         }
     }
 
