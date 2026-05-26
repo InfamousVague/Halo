@@ -43,9 +43,22 @@ final class LiveActivityCoordinator {
     /// All currently-active payloads, high → low priority.
     private(set) var activities: [Resolved] = []
 
-    /// First entry of `activities`. The island renders this in the
-    /// compact slot; the rest stack into the expanded view.
-    var topActivity: Resolved? { activities.first }
+    /// Index of the activity currently on display. Advances on
+    /// a fixed cadence so the island cycles through every
+    /// active publisher rather than parking on the single
+    /// highest-priority one.
+    private(set) var cycleIndex: Int = 0
+
+    /// The activity the island should render right now —
+    /// cycle-aware. Falls back to the first activity if the
+    /// index has drifted past the end of the array (which can
+    /// happen between a tick and the next `pollOnce`).
+    var topActivity: Resolved? {
+        guard !activities.isEmpty else { return nil }
+        let safe = activities.indices.contains(cycleIndex)
+            ? cycleIndex : 0
+        return activities[safe]
+    }
 
     /// Payloads older than this are treated as stale (writer
     /// crashed without clearing) and ignored. 30s is long enough
@@ -53,6 +66,13 @@ final class LiveActivityCoordinator {
     /// that a dead writer falls off within a sensible window.
     @ObservationIgnored private let payloadTTL: TimeInterval = 30
     @ObservationIgnored private var pollTimer: Timer?
+    /// Cycle through active publishers at this cadence so the
+    /// user sees every pill rather than parking on the single
+    /// highest-priority one. 4s feels right — long enough to
+    /// read each, short enough that you don't miss anything
+    /// during a casual glance at the menu bar.
+    @ObservationIgnored private let cycleInterval: TimeInterval = 4
+    @ObservationIgnored private var cycleTimer: Timer?
 
     /// In-process payloads — Halo's own publishers (volume,
     /// brightness, now-playing) write here directly instead of
@@ -70,11 +90,30 @@ final class LiveActivityCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.pollOnce() }
         }
+        cycleTimer = Timer.scheduledTimer(
+            withTimeInterval: cycleInterval, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.advanceCycle() }
+        }
     }
 
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        cycleTimer?.invalidate()
+        cycleTimer = nil
+    }
+
+    /// Advance to the next active publisher. No-op when the
+    /// list is empty or has only one item. Triggers an
+    /// `activities` mutation indirectly so `@Observable`
+    /// downstream views re-render.
+    private func advanceCycle() {
+        guard activities.count > 1 else { return }
+        cycleIndex = (cycleIndex + 1) % activities.count
+        // Re-publishing the array nudges @Observable to fire.
+        let snapshot = activities
+        activities = snapshot
     }
 
     /// Force an immediate re-poll. Used by settings toggles
@@ -135,6 +174,19 @@ final class LiveActivityCoordinator {
         }
         if collected != activities {
             NSLog("[halo] activities changed: \(activities.count) → \(collected.count) (top=\(collected.first?.id ?? "—"))")
+            // Transient HUDs (priority ≥ 90) interrupt the
+            // cycle so volume / brightness HUDs appear the
+            // instant they fire — not on the next 4s tick.
+            // The new arrival is whatever wasn't in `activities`
+            // before; if its priority is high enough, jump to it.
+            let oldIDs = Set(activities.map(\.id))
+            let arrivals = collected.filter { !oldIDs.contains($0.id) }
+            if let urgent = arrivals.first(where: { $0.priority >= 90 }),
+               let idx = collected.firstIndex(where: { $0.id == urgent.id }) {
+                cycleIndex = idx
+            } else if !collected.indices.contains(cycleIndex) {
+                cycleIndex = 0
+            }
             activities = collected
         }
     }

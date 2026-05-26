@@ -16,12 +16,15 @@ import SwiftUI
 ///        │ ☕      1:23 │     circles → visible concave curves
 ///        ╰─────────────╯   ← regular small rounded bottom
 struct NotchView: View {
-    var activities: [LiveActivityCoordinator.Resolved]
+    /// Currently-displayed activity from the coordinator's
+    /// cycle — single slot at a time, swaps every 4s.
+    var activity: LiveActivityCoordinator.Resolved?
+    /// Coordinator's cycle index. Not used in rendering — it's
+    /// here so SwiftUI re-evaluates the view when the index
+    /// advances even if the underlying `activity` reference
+    /// shape stays the same.
+    var cycleSlot: Int = 0
     var layout: NotchLayout
-    /// True while the cursor sits inside the (slop-padded)
-    /// island rect — supplied by `NotchHost`'s global mouse
-    /// monitor since the panel itself is click-through.
-    var isHovered: Bool = false
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -33,11 +36,15 @@ struct NotchView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.clear
-            if let top = activities.first {
-                island(for: top)
+            if let a = activity {
+                island(for: a)
                     .animation(.spring(response: 0.34,
                                        dampingFraction: 0.78),
-                               value: top)
+                               value: a.id)
+                    .animation(.spring(response: 0.34,
+                                       dampingFraction: 0.82),
+                               value: cycleSlot)
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,8 +54,7 @@ struct NotchView: View {
     private func island(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        let frame = Geometry.islandFrame(
-            for: a, layout: layout, expanded: isHovered)
+        let frame = Geometry.islandFrame(for: a, layout: layout)
         let totalWidth = frame.width
         let totalHeight = frame.height
         let centerX = frame.midX
@@ -63,11 +69,7 @@ struct NotchView: View {
             .fill(Color.black)
             .frame(width: totalWidth, height: totalHeight)
 
-            // Same compact row in both states. The pill just
-            // gets wider on hover so the content has more
-            // breathing room — vertical card expansion comes
-            // back in a later phase, when the suite publishers
-            // carry richer payloads worth showing inside it.
+            // Icon left, text right, notch in the middle.
             HStack(spacing: 0) {
                 leadingContent(for: a)
                 Spacer(minLength: notchW + notchClearance * 2)
@@ -78,9 +80,6 @@ struct NotchView: View {
         }
         .frame(width: totalWidth, height: totalHeight)
         .position(x: centerX, y: totalHeight / 2)
-        .animation(.spring(response: 0.34,
-                           dampingFraction: 0.82),
-                   value: isHovered)
     }
 
 
@@ -89,7 +88,10 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         if let img = a.compactLeadingImage {
-            Image(nsImage: tintImage(img, color: a.tint))
+            // B&W scheme — every glyph tints white, ignoring
+            // the publisher's tintHex. Brand colours come back
+            // later as an opt-in setting.
+            Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
@@ -104,11 +106,11 @@ struct NotchView: View {
             Text(text)
                 .font(.system(size: 13, weight: .semibold,
                               design: .rounded))
-                .foregroundStyle(a.tint)
+                .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
         } else if let img = a.compactTrailingImage {
-            Image(nsImage: tintImage(img, color: a.tint))
+            Image(nsImage: tintImage(img, color: .white))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)

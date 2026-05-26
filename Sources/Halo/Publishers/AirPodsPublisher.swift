@@ -224,10 +224,18 @@ extension AirPodsPublisher: CBCentralManagerDelegate {
             || (data.count >= 17 && data[0] == 0x07)
         guard appleHeader else { return }
 
+        // Raw advertisement dump — keeps the publisher
+        // debuggable across firmware revisions. Compare
+        // against the actual L/R/case battery percentages in
+        // Bluetooth Settings to find the right byte offsets.
+        let hex = data.map { String(format: "%02x", $0) }.joined(separator: " ")
+        NSLog("[halo] AirPods raw (\(data.count)b): \(hex) rssi=\(RSSI)")
+
         Task { @MainActor [weak self] in
             guard let self,
                   let reading = self.parseAdvertisement(data)
             else { return }
+            NSLog("[halo] AirPods parsed: L=\(String(describing: reading.left)) R=\(String(describing: reading.right)) case=\(String(describing: reading.caseBattery)) charging=\(reading.charging)")
             self.apply(reading: reading)
         }
     }

@@ -15,17 +15,13 @@ import SwiftUI
 final class NotchHost: NSObject {
 
     let coordinator = LiveActivityCoordinator()
-    /// Drives the horizontal-expand on hover. Observed by
-    /// `NotchView`; mutated by a global NSEvent monitor that
-    /// tracks the cursor's screen position vs. the island rect.
-    let hover = HoverTracker()
 
     private var panel: NSPanel?
     private var hostingController: NSHostingController<NotchHostRoot>?
     private var screenObserver: NSObjectProtocol?
-    /// Latest cached layout — used by the hover monitor to
-    /// recompute the island rect against current cursor
-    /// position.
+    /// Latest cached layout — held for rebuildPanel reuse and
+    /// in case we need to re-query screen geometry without
+    /// hitting NSScreen.main again.
     private var currentLayout: NotchLayout?
 
     /// In-process feature publishers (volume, brightness, music,
@@ -41,7 +37,6 @@ final class NotchHost: NSObject {
         rebuildPanel()
         coordinator.start()
         startPublishers()
-        installHoverMonitor()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
@@ -57,14 +52,12 @@ final class NotchHost: NSObject {
             NotificationCenter.default.removeObserver(o)
             screenObserver = nil
         }
-        uninstallHoverMonitor()
         stopPublishers()
         coordinator.stop()
         panel?.orderOut(nil)
         panel = nil
         hostingController = nil
         currentLayout = nil
-        hover.isHovered = false
     }
 
     private func startPublishers() {
@@ -164,8 +157,7 @@ final class NotchHost: NSObject {
 
         let root = NotchHostRoot(
             coordinator: coordinator,
-            layout: layout,
-            hover: hover)
+            layout: layout)
 
         if let hc = hostingController {
             hc.rootView = root
@@ -188,72 +180,19 @@ final class NotchHost: NSObject {
         panel?.orderFrontRegardless()
     }
 
-    // MARK: - Hover monitor
-
-    /// Global NSEvent monitor — fires on every mouse-move
-    /// system-wide. We don't need accessibility permission
-    /// because this monitor is observation-only (no event
-    /// modification, no click forwarding). Cheap: a CGPoint
-    /// containment check on every move.
-    private var hoverMonitor: Any?
-
-    private func installHoverMonitor() {
-        hoverMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: .mouseMoved
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refreshHover() }
-        }
-    }
-
-    private func uninstallHoverMonitor() {
-        if let m = hoverMonitor {
-            NSEvent.removeMonitor(m)
-            hoverMonitor = nil
-        }
-    }
-
-    private func refreshHover() {
-        guard let layout = currentLayout,
-              let screen = NSScreen.main
-        else { return }
-        let cursor = NSEvent.mouseLocation  // screen coords
-        // Convert to panel-local SwiftUI coords (top-left
-        // origin). Panel sits with its top edge at the screen
-        // top, so we just flip Y around screen.maxY.
-        let panelLocal = CGPoint(
-            x: cursor.x - screen.frame.minX,
-            y: screen.frame.maxY - cursor.y)
-        let rect = Geometry.islandFrame(
-            for: coordinator.topActivity,
-            layout: layout,
-            expanded: hover.isHovered)
-            .insetBy(dx: -6, dy: -6)
-        hover.isHovered = rect.contains(panelLocal)
-    }
 }
 
 /// SwiftUI root mounted inside the NSPanel's `NSHostingController`.
 struct NotchHostRoot: View {
     @Bindable var coordinator: LiveActivityCoordinator
     let layout: NotchLayout
-    @Bindable var hover: HoverTracker
 
     var body: some View {
         NotchView(
-            activities: coordinator.activities,
-            layout: layout,
-            isHovered: hover.isHovered)
+            activity: coordinator.topActivity,
+            cycleSlot: coordinator.cycleIndex,
+            layout: layout)
     }
-}
-
-/// Tiny observable that bridges the global mouse monitor (in
-/// `NotchHost`) and the SwiftUI tree's `isHovered` parameter.
-/// Lives outside `NotchHost` only because SwiftUI needs an
-/// observable reference type to react to.
-@MainActor
-@Observable
-final class HoverTracker {
-    var isHovered: Bool = false
 }
 
 /// "Where does the island sit on THIS screen" math. Notched
