@@ -250,7 +250,7 @@ final class HoverTracker {
     /// enough that the expanded card is visible.
     private(set) var isExpanded: Bool = false
 
-    private let expandDelay: TimeInterval = 1.0
+    private let expandDelay: TimeInterval = 0.5
     @ObservationIgnored private var expandTask: Task<Void, Never>?
 
     func setHovered(_ hovered: Bool) {
