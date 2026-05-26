@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Halo intentionally declares zero entitlements. It only:
+        - Watches a file directory it owns (~/Library/Application
+          Support/MattsSoftware/live-activity)
+        - Renders a borderless NSPanel at .popUpMenu level
+        - Has a status-bar item
+        None of that needs special permission and none of it
+        requires the sandbox to be on (which would forbid the
+        cross-process file polling).
+    -->
+</dict>
+</plist>

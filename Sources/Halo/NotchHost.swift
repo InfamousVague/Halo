@@ -1,0 +1,181 @@
+import AppKit
+import SwiftUI
+
+/// Owns the borderless NSPanel that hosts Halo's island shape at
+/// the top of the screen. Resolves the notch's exact geometry on
+/// every screen-parameter change so the island re-anchors when
+/// the user docks / undocks an external display.
+///
+/// Click-through across the whole window — only the island itself
+/// is visible, the surrounding area is transparent. Phase 0 keeps
+/// `ignoresMouseEvents = true` so the menu bar stays clickable;
+/// hover-to-expand interactivity returns once we wire custom
+/// hitTest geometry (Phase 2).
+@MainActor
+final class NotchHost: NSObject {
+
+    let coordinator = LiveActivityCoordinator()
+
+    private var panel: NSPanel?
+    private var hostingController: NSHostingController<NotchHostRoot>?
+    private var screenObserver: NSObjectProtocol?
+
+    private(set) var isEnabled: Bool = false
+
+    func enable() {
+        guard !isEnabled else { return }
+        isEnabled = true
+        rebuildPanel()
+        coordinator.start()
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rebuildPanel() }
+        }
+    }
+
+    func disable() {
+        guard isEnabled else { return }
+        isEnabled = false
+        if let o = screenObserver {
+            NotificationCenter.default.removeObserver(o)
+            screenObserver = nil
+        }
+        coordinator.stop()
+        panel?.orderOut(nil)
+        panel = nil
+        hostingController = nil
+    }
+
+    private func rebuildPanel() {
+        guard let screen = NSScreen.main else { return }
+        let layout = NotchLayout.resolve(for: screen)
+
+        // Panel covers a tall band at the very top of the screen
+        // — the island lives in the top portion, the rest is
+        // transparent room for a future expanded state to grow
+        // downward without resizing the window (which would
+        // jitter z-order). Full screen width so the island can
+        // anchor to the notch wherever it is on multi-monitor
+        // setups.
+        let panelRect = NSRect(
+            x: screen.frame.minX,
+            y: screen.frame.maxY - layout.panelHeight,
+            width: screen.frame.width,
+            height: layout.panelHeight
+        )
+
+        if panel == nil {
+            let p = NSPanel(
+                contentRect: panelRect,
+                styleMask: [.borderless, .nonactivatingPanel,
+                            .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = false
+            p.isMovable = false
+            p.isFloatingPanel = true
+            // .popUpMenu (101) is above status-bar items (25) so
+            // a packed menu bar can't draw over the island.
+            p.level = .popUpMenu
+            p.collectionBehavior = [
+                .canJoinAllSpaces,
+                .stationary,
+                .fullScreenAuxiliary,
+                .ignoresCycle,
+            ]
+            // Click-through. The island is purely display in
+            // Phase 0; Phase 2 adds custom hitTest geometry so
+            // hover-to-expand can land taps on the island
+            // without claiming the rest of the menu bar.
+            p.ignoresMouseEvents = true
+            p.hidesOnDeactivate = false
+            panel = p
+        } else {
+            panel?.setFrame(panelRect, display: false, animate: false)
+        }
+
+        let root = NotchHostRoot(
+            coordinator: coordinator,
+            layout: layout
+        )
+
+        if let hc = hostingController {
+            hc.rootView = root
+        } else {
+            let hc = NSHostingController(rootView: root)
+            hc.view.wantsLayer = true
+            hc.view.layer?.backgroundColor = NSColor.clear.cgColor
+            // Pin host view's resizing to panel so SwiftUI has a
+            // concrete bounds to render against — without this,
+            // .frame(maxWidth: .infinity) collapses to 0×0.
+            hc.view.autoresizingMask = [.width, .height]
+            hostingController = hc
+            panel?.contentViewController = hc
+        }
+        // Re-assert frames AFTER attaching the controller; the
+        // contentViewController setter can shrink the window to
+        // the controller's intrinsic size (zero for our
+        // infinity-framed root).
+        panel?.setFrame(panelRect, display: true, animate: false)
+        hostingController?.view.frame = NSRect(
+            origin: .zero, size: panelRect.size)
+
+        panel?.orderFrontRegardless()
+    }
+}
+
+/// SwiftUI root mounted inside the NSPanel's `NSHostingController`.
+struct NotchHostRoot: View {
+    @Bindable var coordinator: LiveActivityCoordinator
+    let layout: NotchLayout
+
+    var body: some View {
+        NotchView(activities: coordinator.activities, layout: layout)
+    }
+}
+
+/// "Where does the island sit on THIS screen" math. Notched
+/// MacBooks (14"/16" Pro, MBA M2+) expose the notch's bounds via
+/// `auxiliaryTopLeftArea` / `auxiliaryTopRightArea`. Non-notched
+/// displays get a 200pt phantom notch centred at top so the
+/// island shape still renders in a sensible spot.
+struct NotchLayout: Equatable {
+    let hasNotch: Bool
+    let notchLeadingX: CGFloat
+    let notchTrailingX: CGFloat
+    let screenWidth: CGFloat
+    let menuBarHeight: CGFloat
+    let panelHeight: CGFloat
+
+    var notchWidth: CGFloat { notchTrailingX - notchLeadingX }
+    var notchCenterX: CGFloat { (notchLeadingX + notchTrailingX) / 2 }
+
+    static func resolve(for screen: NSScreen) -> NotchLayout {
+        let screenWidth = screen.frame.width
+        if let leftAux = screen.auxiliaryTopLeftArea,
+           let rightAux = screen.auxiliaryTopRightArea {
+            return NotchLayout(
+                hasNotch: true,
+                notchLeadingX: leftAux.maxX - screen.frame.minX,
+                notchTrailingX: rightAux.minX - screen.frame.minX,
+                screenWidth: screenWidth,
+                menuBarHeight: leftAux.height,
+                panelHeight: 200
+            )
+        }
+        let phantom: CGFloat = 200
+        return NotchLayout(
+            hasNotch: false,
+            notchLeadingX: (screenWidth - phantom) / 2,
+            notchTrailingX: (screenWidth + phantom) / 2,
+            screenWidth: screenWidth,
+            menuBarHeight: 24,
+            panelHeight: 200
+        )
+    }
+}
