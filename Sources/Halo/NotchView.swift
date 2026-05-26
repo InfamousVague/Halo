@@ -275,14 +275,44 @@ struct NotchView: View {
     /// Per-publisher accent. Prefers the activity's declared
     /// tint (file-store publishers set it via tintHex); falls
     /// back to a hand-picked brand color for built-in
-    /// publishers that publish white.
+    /// publishers that publish white. The now-playing accent
+    /// is further routed through the source app so Spotify
+    /// pulls green, Apple Music pulls red, etc — the line
+    /// then mirrors whichever app the user is actually
+    /// listening to.
     private static func accentColor(
         for a: LiveActivityCoordinator.Resolved
     ) -> Color {
+        if a.id == "halo.nowplaying", let media = a.media {
+            return mediaSourceColor(media.source)
+        }
         // The compact pill tint is white across publishers —
         // detect that and route to the per-id brand color.
         if let brand = brandColor(forID: a.id) { return brand }
         return a.tint
+    }
+
+    /// Brand colour for the app currently driving the
+    /// now-playing pill. `source` matches the string the
+    /// scripters / MediaRemote bridge sets on `MediaInfo`.
+    /// Unknown sources fall back to the generic music pink.
+    private static func mediaSourceColor(_ source: String) -> Color {
+        switch source {
+        case "Spotify":
+            // Spotify green (#1DB954).
+            return Color(red: 0.11, green: 0.73, blue: 0.33)
+        case "Music":
+            // Apple Music red (#FA243C).
+            return Color(red: 0.98, green: 0.14, blue: 0.24)
+        case "MediaRemote":
+            // Generic media bridge — we don't know who's
+            // playing. Use the original neutral music pink so
+            // the pill stays branded as "audio" rather than
+            // jumping colours per track.
+            return Color(red: 0.96, green: 0.41, blue: 0.62)
+        default:
+            return Color(red: 0.96, green: 0.41, blue: 0.62)
+        }
     }
 
     private static func brandColor(forID id: String) -> Color? {
