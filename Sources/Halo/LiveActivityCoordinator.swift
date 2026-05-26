@@ -479,6 +479,9 @@ final class LiveActivityCoordinator {
     /// Special names mapped to bundled assets:
     ///   • `"worktree.git"` → official Git logo at
     ///     `Resources/WorktreeGit.png` (CC BY 3.0, Jason Long).
+    ///   • `"port.cleat"` → Port's own menu-bar glyph at
+    ///     `Resources/PortMenuBar.png`, so the island pill
+    ///     matches the menu bar item.
     /// Anything else is treated as an SF Symbol name.
     static func symbolImage(_ name: String?) -> NSImage? {
         guard let name, !name.isEmpty else { return nil }
@@ -494,18 +497,25 @@ final class LiveActivityCoordinator {
     private static func bundledBrandImage(_ name: String) -> NSImage? {
         switch name {
         case "worktree.git":
-            guard let url = Bundle.module.url(
-                forResource: "WorktreeGit", withExtension: "png"),
-                  let img = NSImage(contentsOf: url)
-            else { return nil }
-            // Force consistent draw size + treat as template so
-            // it tints the same as SF Symbols on the pill.
-            img.size = NSSize(width: 20, height: 20)
-            img.isTemplate = true
-            return img
+            return loadBundled("WorktreeGit")
+        case "port.cleat":
+            return loadBundled("PortMenuBar")
         default:
             return nil
         }
+    }
+
+    /// Load a PNG from `Resources/`, normalise its draw size,
+    /// and mark it template so it tints to match the other SF
+    /// Symbols on the pill.
+    private static func loadBundled(_ name: String) -> NSImage? {
+        guard let url = Bundle.module.url(
+            forResource: name, withExtension: "png"),
+              let img = NSImage(contentsOf: url)
+        else { return nil }
+        img.size = NSSize(width: 20, height: 20)
+        img.isTemplate = true
+        return img
     }
 }
 

@@ -486,34 +486,56 @@ struct NotchView: View {
         }
     }
 
-    /// Concatenates the string as `Text` runs, dimming any
-    /// single letter that immediately follows a digit. Catches
-    /// the unit suffixes in time displays — `1h30m`, `5m 23s`,
-    /// `1d4h` — without touching pure-letter strings like
-    /// repo names or branch names. Lone letters between digits
-    /// (e.g. the `m` in `1m 23s` even when followed by a
-    /// space) still dim because the rule is "previous char is
-    /// a digit" — and the next-not-letter check just guards
-    /// against words happening to start with a letter that
-    /// followed a digit accidentally.
+    /// Concatenates the string as `Text` runs, dimming the
+    /// "labels" around digits while leaving the digits at full
+    /// punch. Two categories of label:
+    ///
+    /// * **Unit letters** following a digit — `h`/`m`/`s`/`d`
+    ///   in things like `1h30m`, `5m 23s`, `1d4h`.
+    /// * **Numeric punctuation** in time / percent strings —
+    ///   `:`, `/`, `%` in things like `1:23`, `1:23 / 4:56`,
+    ///   `50%`. Only dimmed when the surrounding string is
+    ///   clearly numeric (digit immediately followed by `:`
+    ///   or `%` somewhere in the run), so a branch name like
+    ///   `feature/foo` doesn't get its `/` dimmed too.
     fileprivate static func dimmedUnitsText(_ s: String) -> Text {
         var result = Text("")
         let chars = Array(s)
+        // Detect "this is a numeric label" — a digit
+        // immediately followed by `:` or `%` somewhere in the
+        // string. Used to gate the punctuation dimming.
+        let isNumericContext: Bool = {
+            for i in 0..<chars.count where chars[i].isNumber {
+                guard i + 1 < chars.count else { continue }
+                let next = chars[i + 1]
+                if next == ":" || next == "%" { return true }
+            }
+            return false
+        }()
         for i in 0..<chars.count {
             let ch = chars[i]
             let isUnit: Bool = {
-                guard ch.isLetter else { return false }
-                guard i > 0, chars[i - 1].isNumber else {
-                    return false
+                // Single-letter unit after a digit (h/m/s/d).
+                if ch.isLetter {
+                    guard i > 0, chars[i - 1].isNumber else {
+                        return false
+                    }
+                    // The next char (if any) should NOT also
+                    // be a letter — otherwise we'd be in the
+                    // middle of a word ("Mango" with a
+                    // preceding "10").
+                    if i + 1 < chars.count,
+                       chars[i + 1].isLetter {
+                        return false
+                    }
+                    return true
                 }
-                // Single-letter unit — the next char (if any)
-                // should NOT also be a letter, otherwise we'd
-                // be in the middle of a word ("Mango" with a
-                // preceding "10").
-                if i + 1 < chars.count, chars[i + 1].isLetter {
-                    return false
+                // Numeric punctuation in a numeric run.
+                if isNumericContext &&
+                   (ch == ":" || ch == "/" || ch == "%") {
+                    return true
                 }
-                return true
+                return false
             }()
             let piece = Text(String(ch))
                 .foregroundStyle(
