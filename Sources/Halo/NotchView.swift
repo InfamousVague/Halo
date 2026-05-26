@@ -88,9 +88,11 @@ struct NotchView: View {
             .frame(width: totalWidth, height: totalHeight)
 
             VStack(spacing: 0) {
-                // Compact row — always present. Stays at the
-                // very top so the notch geometry still reads
-                // (concave outer corners hug the cutout).
+                // Compact row — always reserves its space so
+                // the notch geometry stays put, but its content
+                // fades out when expanded so the user doesn't
+                // see the same info twice (icon + album cover,
+                // time-readout + scrubber, etc).
                 HStack(spacing: 0) {
                     leadingContent(for: a)
                     Spacer(minLength: notchW + notchClearance * 2)
@@ -98,6 +100,7 @@ struct NotchView: View {
                 }
                 .padding(.horizontal, contentInset)
                 .frame(width: totalWidth, height: compactRowHeight)
+                .opacity(isExpanded ? 0 : 1)
 
                 if isExpanded {
                     ExpandedCard(activity: a)
