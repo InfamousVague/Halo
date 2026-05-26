@@ -168,26 +168,21 @@ struct NotchView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Match the island's hover-expansion spring
-            // *exactly* so the contour morphs in lock-step
-            // with the pill rather than snapping to the new
-            // frame or lagging behind it. `ScreenAccentTrace`
-            // is `Animatable` on its `islandFrame`, so this
-            // animation propagates through to the path
-            // coordinates and the trace stretches / contracts
-            // alongside the pill body.
-            //
-            // No spring on text changes: per-second ticks
-            // (clock counters, music position) would otherwise
-            // animate the screen-edge line every second, and
-            // a 600pt path interpolating per-second was the
-            // source of the jittery "wobble" the user saw.
-            // Letting the path snap on text changes is
-            // invisible — the shift is only a point or two —
-            // and the pill still springs on its own.
+            // Springs match the island's *exactly* so the
+            // contour morphs in lock-step with the pill rather
+            // than snapping to the new frame or lagging behind
+            // it. `ScreenAccentTrace` is `Animatable` on its
+            // `islandFrame`, so these animations propagate
+            // through to the path coordinates and the trace
+            // stretches / contracts alongside the pill body
+            // whether the change comes from hover or from
+            // trailing-text width changes.
             .animation(.spring(response: 0.34,
                                dampingFraction: 0.9),
                        value: isExpanded)
+            .animation(.spring(response: 0.32,
+                               dampingFraction: 0.86),
+                       value: a.compactTrailingText)
             .allowsHitTesting(false)
         }
     }
