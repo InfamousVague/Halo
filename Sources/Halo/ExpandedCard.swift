@@ -19,6 +19,8 @@ struct ExpandedCard: View {
             switch activity.id {
             case "halo.stats":
                 StatsExpandedView()
+            case "espresso":
+                EspressoExpandedView(activity: activity)
             default:
                 genericContent
             }
@@ -73,6 +75,70 @@ struct ExpandedCard: View {
         case "nowplaying":  return "NOW PLAYING"
         default:            return trimmed.uppercased()
         }
+    }
+}
+
+// MARK: - Espresso
+
+/// Single row showing the current keep-awake state (`ON` /
+/// countdown / `OFF`) with an "End session" CTA visible only
+/// while a session is active. Stops via a distributed
+/// notification — Espresso's pane listens and calls
+/// `store.deactivate()`.
+private struct EspressoExpandedView: View {
+    let activity: LiveActivityCoordinator.Resolved
+
+    private var isActive: Bool {
+        // Active state is whatever the publisher chooses to
+        // surface in `compactTrailingText`; idle string is
+        // literally "OFF".
+        (activity.compactTrailingText ?? "OFF") != "OFF"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let img = activity.compactLeadingImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ESPRESSO")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(.white)
+                Text(activity.compactTrailingText ?? "OFF")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+            Spacer(minLength: 0)
+            if isActive {
+                Button {
+                    DistributedNotificationCenter.default()
+                        .postNotificationName(
+                            Notification.Name(
+                                "com.mattssoftware.espresso.stop"),
+                            object: nil,
+                            deliverImmediately: true)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 9))
+                        Text("End session")
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.white.opacity(0.14)))
+                    .foregroundStyle(.white)
+                    .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

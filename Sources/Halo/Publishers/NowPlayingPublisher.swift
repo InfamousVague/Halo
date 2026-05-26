@@ -33,10 +33,14 @@ final class NowPlayingPublisher: HaloPublisher {
     }
 
     func start() {
+        NowPlayingDebugLog.append("\(Date()) start()\n")
         guard MediaRemote.shared != nil else {
-            NSLog("[halo] NowPlaying: MediaRemote.framework unavailable")
+            NowPlayingDebugLog.append(
+                "\(Date()) MediaRemote.framework UNAVAILABLE\n")
             return
         }
+        NowPlayingDebugLog.append(
+            "\(Date()) MediaRemote loaded\n")
         // Subscribe to MediaRemote's change notifications BEFORE
         // calling Register* — otherwise the first event may fire
         // before our observers attach.
@@ -48,7 +52,9 @@ final class NowPlayingPublisher: HaloPublisher {
             let obs = NotificationCenter.default.addObserver(
                 forName: NSNotification.Name(name),
                 object: nil, queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] note in
+                NowPlayingDebugLog.append(
+                    "\(Date()) notif: \(note.name.rawValue)\n")
                 Task { @MainActor in self?.publishCurrent() }
             }
             observers.append(obs)
@@ -78,11 +84,16 @@ final class NowPlayingPublisher: HaloPublisher {
     }
 
     private func apply(info: [String: Any]) {
-        // No info or paused (playbackRate 0) → withdraw.
-        let playbackRate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"]
-            as? Double ?? 0
+        let keys = info.keys.sorted().joined(separator: ",")
         let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
         let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+        // PlaybackRate is sometimes Float, sometimes Double in
+        // the NSNumber bridge — coerce via NSNumber so neither
+        // type misses.
+        let playbackRate = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"]
+            as? NSNumber)?.doubleValue ?? 0
+        NowPlayingDebugLog.append(
+            "\(Date()) apply: title=\(title ?? "nil") artist=\(artist ?? "nil") rate=\(playbackRate) keys=\(keys)\n")
 
         guard let title, !title.isEmpty, playbackRate > 0 else {
             coordinator?.clear(id: id)
@@ -161,5 +172,40 @@ private final class MediaRemote {
 
     func registerForNotifications(queue: DispatchQueue) {
         registerSym(queue)
+    }
+}
+
+// MARK: - Debug log
+
+/// `/tmp/halo-nowplaying.log` — same pattern as the AirPods
+/// debug log. Bypasses NSLog's privacy redaction so we can see
+/// what MediaRemote returns (and whether Spotify shows up).
+/// Capped at 64KB.
+enum NowPlayingDebugLog {
+    nonisolated(unsafe) private static var didTruncate = false
+    private static let path = "/tmp/halo-nowplaying.log"
+
+    static func append(_ line: String) {
+        if !didTruncate {
+            try? "".write(toFile: path, atomically: true,
+                          encoding: .utf8)
+            didTruncate = true
+        }
+        guard let handle = FileHandle(forWritingAtPath: path),
+              let data = line.data(using: .utf8)
+        else { return }
+        handle.seekToEndOfFile()
+        if handle.offsetInFile > 64_000 {
+            try? handle.close()
+            try? "".write(toFile: path, atomically: true,
+                          encoding: .utf8)
+            if let h2 = FileHandle(forWritingAtPath: path) {
+                try? h2.write(contentsOf: data)
+                try? h2.close()
+            }
+            return
+        }
+        try? handle.write(contentsOf: data)
+        try? handle.close()
     }
 }
