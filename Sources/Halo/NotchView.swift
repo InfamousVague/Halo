@@ -159,21 +159,13 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         if let text = a.compactTrailingText {
-            // Trailing slot is the data — full-opacity white,
-            // sized to match the system menu-bar clock so the
-            // pill looks native next to the rest of the bar.
-            //
-            // NO `.contentTransition(.opacity)` here: it
-            // crossfades on every text change, which makes the
-            // music position tick (1:23 → 1:24) and the
-            // Espresso countdown look like they're flickering.
-            // Activity-level crossfades still work via the
-            // `.id(a.id)` + `.transition(.opacity)` below —
-            // those only fire when the view tree REPLACES the
-            // Text, i.e. when the displayed activity changes.
-            Text(text)
+            // Letter unit suffixes (the 'h'/'m'/'s' after
+            // digits in things like "1h30m" or "5m 23s") drop
+            // to 50% — the number is the data, the unit is the
+            // label. Pure-letter strings (branch names, etc.)
+            // stay at 100%.
+            Self.dimmedUnitsText(text)
                 .font(.system(size: 13))
-                .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
                 .id("trail-text-\(a.id)")
@@ -187,6 +179,45 @@ struct NotchView: View {
                 .id("trail-img-\(a.id)")
                 .transition(.opacity)
         }
+    }
+
+    /// Concatenates the string as `Text` runs, dimming any
+    /// single letter that immediately follows a digit. Catches
+    /// the unit suffixes in time displays — `1h30m`, `5m 23s`,
+    /// `1d4h` — without touching pure-letter strings like
+    /// repo names or branch names. Lone letters between digits
+    /// (e.g. the `m` in `1m 23s` even when followed by a
+    /// space) still dim because the rule is "previous char is
+    /// a digit" — and the next-not-letter check just guards
+    /// against words happening to start with a letter that
+    /// followed a digit accidentally.
+    fileprivate static func dimmedUnitsText(_ s: String) -> Text {
+        var result = Text("")
+        let chars = Array(s)
+        for i in 0..<chars.count {
+            let ch = chars[i]
+            let isUnit: Bool = {
+                guard ch.isLetter else { return false }
+                guard i > 0, chars[i - 1].isNumber else {
+                    return false
+                }
+                // Single-letter unit — the next char (if any)
+                // should NOT also be a letter, otherwise we'd
+                // be in the middle of a word ("Mango" with a
+                // preceding "10").
+                if i + 1 < chars.count, chars[i + 1].isLetter {
+                    return false
+                }
+                return true
+            }()
+            let piece = Text(String(ch))
+                .foregroundStyle(
+                    isUnit
+                        ? Color.white.opacity(0.5)
+                        : Color.white)
+            result = result + piece
+        }
+        return result
     }
 
     /// Paint a template NSImage with the activity's tint.
