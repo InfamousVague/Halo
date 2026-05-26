@@ -40,6 +40,21 @@ struct NotchView: View {
     /// drawn. Stays at 1 until the activity changes (or
     /// disappears), then resets for the next re-trace.
     @State private var borderProgress: Double = 0
+    /// Colour of the line that's *currently* being drawn (or
+    /// is fully drawn). Set inside `triggerBorderTrace`. Nil
+    /// means we've never seen an activity yet.
+    @State private var currentAccentColor: Color?
+    /// Colour of the *previously*-drawn line. Held under the
+    /// current trace at full opacity / full progress so the
+    /// new trace paints over it from the bottom-centre out
+    /// instead of flashing through a blank top edge. Cleared
+    /// shortly after the current trace finishes.
+    @State private var previousAccentColor: Color?
+    /// Identifier for the in-flight trace. The trailing task
+    /// that clears `previousAccentColor` checks this before
+    /// running so a rapid second activity change doesn't wipe
+    /// out the underlay the *new* trace still needs.
+    @State private var traceToken: UUID = UUID()
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -90,15 +105,18 @@ struct NotchView: View {
     @ViewBuilder
     private var screenTopAccent: some View {
         if let a = activity {
-            let color = Self.accentColor(for: a)
             // Single 1pt stroke. The path runs from the pill's
             // bottom-centre out to each screen edge, hugging
             // the island's contour through the bottom corner,
             // side, and concave bite before extending along
-            // the screen's top edge. Two copies — one per
-            // side — are stacked and trimmed by
-            // `borderProgress` so the line draws itself
-            // outward from the centre.
+            // the screen's top edge.
+            //
+            // Two strokes are stacked: the previously-drawn
+            // accent (in the prior activity's colour, at full
+            // progress) sits underneath, and the new accent
+            // traces in over the top of it. This avoids the
+            // brief blank flash that used to appear when the
+            // line reset to progress 0 between activities.
             let frame = Geometry.islandFrame(
                 for: a, layout: layout, expanded: isExpanded)
             let stroke = StrokeStyle(
@@ -106,24 +124,44 @@ struct NotchView: View {
                 lineCap: .round,
                 lineJoin: .round)
             ZStack {
-                ScreenAccentTrace(
-                    side: .right,
-                    islandFrame: frame,
-                    screenWidth: layout.screenWidth,
-                    punchRadius: punchRadius,
-                    bottomCornerRadius: bottomCornerRadius
-                )
-                .trim(from: 0, to: borderProgress)
-                .stroke(color, style: stroke)
-                ScreenAccentTrace(
-                    side: .left,
-                    islandFrame: frame,
-                    screenWidth: layout.screenWidth,
-                    punchRadius: punchRadius,
-                    bottomCornerRadius: bottomCornerRadius
-                )
-                .trim(from: 0, to: borderProgress)
-                .stroke(color, style: stroke)
+                if let prev = previousAccentColor {
+                    ScreenAccentTrace(
+                        side: .right,
+                        islandFrame: frame,
+                        screenWidth: layout.screenWidth,
+                        punchRadius: punchRadius,
+                        bottomCornerRadius: bottomCornerRadius
+                    )
+                    .stroke(prev, style: stroke)
+                    ScreenAccentTrace(
+                        side: .left,
+                        islandFrame: frame,
+                        screenWidth: layout.screenWidth,
+                        punchRadius: punchRadius,
+                        bottomCornerRadius: bottomCornerRadius
+                    )
+                    .stroke(prev, style: stroke)
+                }
+                if let color = currentAccentColor {
+                    ScreenAccentTrace(
+                        side: .right,
+                        islandFrame: frame,
+                        screenWidth: layout.screenWidth,
+                        punchRadius: punchRadius,
+                        bottomCornerRadius: bottomCornerRadius
+                    )
+                    .trim(from: 0, to: borderProgress)
+                    .stroke(color, style: stroke)
+                    ScreenAccentTrace(
+                        side: .left,
+                        islandFrame: frame,
+                        screenWidth: layout.screenWidth,
+                        punchRadius: punchRadius,
+                        bottomCornerRadius: bottomCornerRadius
+                    )
+                    .trim(from: 0, to: borderProgress)
+                    .stroke(color, style: stroke)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Match the island's hover-expansion spring so the
@@ -198,15 +236,39 @@ struct NotchView: View {
     }
 
     /// Kick off the screen-top accent: trace grows from 0 to
-    /// 1 over ~0.9s and then **stays drawn**. The line only
-    /// disappears when the activity itself goes away (the
-    /// `if let a = activity` guard above strips the view), or
-    /// when the next activity takes the slot and resets the
-    /// progress for its own re-trace.
+    /// 1 over ~0.9s and then **stays drawn**. The previous
+    /// accent's colour is held under the new trace at full
+    /// opacity / full progress so the new line paints over it
+    /// from the bottom-centre out, rather than flashing
+    /// through a blank top edge. The underlay is dropped a
+    /// little after the new trace completes — `traceToken`
+    /// guards against a rapid second change wiping out an
+    /// underlay the next trace still needs.
     private func triggerBorderTrace() {
+        guard let a = activity else { return }
+        let newColor = Self.accentColor(for: a)
+        // Only promote the current colour to "previous" if we
+        // had one. On first activation `currentAccentColor` is
+        // nil and the new trace draws onto an empty top edge,
+        // which is correct — there's nothing to overlay.
+        if let cur = currentAccentColor {
+            previousAccentColor = cur
+        }
+        currentAccentColor = newColor
+        let token = UUID()
+        traceToken = token
         borderProgress = 0
         withAnimation(.easeOut(duration: 0.9)) {
             borderProgress = 1
+        }
+        Task { @MainActor in
+            // Hold the underlay slightly past the trace's
+            // finish so the new line has fully painted over
+            // every pixel of the old one before we drop it.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if traceToken == token {
+                previousAccentColor = nil
+            }
         }
     }
 
