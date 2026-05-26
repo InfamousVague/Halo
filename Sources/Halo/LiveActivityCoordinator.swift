@@ -116,6 +116,18 @@ final class LiveActivityCoordinator {
     /// island transitions smoothly between focus changes.
     private(set) var cycleIndex: Int = 0
 
+    /// Position within `activities` for the ambient round-robin.
+    /// Advanced by `ambientTimer` on a regular cadence whenever
+    /// nothing's currently locked / focused, so the user sees
+    /// every active publisher in turn instead of being parked
+    /// on whoever has the top priority (typically Espresso).
+    @ObservationIgnored private var ambientCursor: Int = 0
+    @ObservationIgnored private var ambientTimer: Timer?
+    /// Seconds the slot holds on a given publisher in ambient
+    /// rotation before advancing to the next one.
+    @ObservationIgnored
+        private let ambientRotateInterval: TimeInterval = 7
+
     /// The activity the island should render right now. Three-
     /// tier selection:
     ///   1. **User-locked** — the publisher the user manually
@@ -144,7 +156,13 @@ final class LiveActivityCoordinator {
             }
             .sorted { $0.1 > $1.1 }
         if let first = focused.first { return first.0 }
-        return activities.first
+        // Ambient: rotate through every active publisher
+        // (Espresso, Worktree, Port, …) on a steady cadence
+        // instead of parking on `activities.first` (whoever
+        // has the top priority). The user can still tap to
+        // jump straight to a specific one — that path goes
+        // through the user-lock branch above.
+        return activities[ambientCursor % activities.count]
     }
 
     /// Payloads older than this are treated as stale (writer
@@ -206,6 +224,12 @@ final class LiveActivityCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.pollOnce() }
         }
+        ambientTimer = Timer.scheduledTimer(
+            withTimeInterval: ambientRotateInterval,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rotateAmbient() }
+        }
         // Publishers post this distributed notification right
         // after writing — gives us instant refresh instead of
         // waiting up to a second for the next polling tick.
@@ -223,11 +247,35 @@ final class LiveActivityCoordinator {
     func stop() {
         pollTimer?.invalidate()
         pollTimer = nil
+        ambientTimer?.invalidate()
+        ambientTimer = nil
         if let o = refreshObserver {
             DistributedNotificationCenter.default()
                 .removeObserver(o)
             refreshObserver = nil
         }
+    }
+
+    /// Step `ambientCursor` to the next active publisher,
+    /// skipping if we'd be stealing the slot from a user
+    /// lock or a publisher that's mid-focus-window. Bumps
+    /// `cycleIndex` so SwiftUI re-evaluates `topActivity`
+    /// AND so `NotchView` recognises the change as a cycle
+    /// (silent) rather than a new-arrival (traces the
+    /// accent line).
+    private func rotateAmbient() {
+        guard activities.count > 1 else { return }
+        let now = Date()
+        if let until = userLockUntil, until > now { return }
+        if focusUntil.contains(where: { $0.value > now }) {
+            return
+        }
+        ambientCursor &+= 1
+        cycleIndex &+= 1
+        // Nudge @Observable so SwiftUI re-reads topActivity
+        // even though `activities` is unchanged in identity.
+        let snapshot = activities
+        activities = snapshot
     }
 
     /// User-initiated step through the active set. Picks the
@@ -242,7 +290,13 @@ final class LiveActivityCoordinator {
         let currentIdx = activities.firstIndex {
             $0.id == currentID
         } ?? -1
-        let next = activities[(currentIdx + 1) % activities.count]
+        let nextIdx = (currentIdx + 1) % activities.count
+        let next = activities[nextIdx]
+        // Sync the ambient cursor too, so when the user lock
+        // expires we don't snap back to wherever ambient was
+        // before the tap — the next ambient tick advances
+        // from the user's chosen position instead.
+        ambientCursor = nextIdx
         userLockedID = next.id
         userLockUntil = Date().addingTimeInterval(userLockDuration)
         cycleIndex &+= 1
