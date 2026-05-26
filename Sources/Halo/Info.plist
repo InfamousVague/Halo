@@ -7,8 +7,8 @@
   <key>CFBundleIdentifier</key><string>com.mattssoftware.halo</string>
   <key>CFBundleExecutable</key><string>Halo</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.16</string>
-  <key>CFBundleVersion</key><string>0.1.16</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleVersion</key><string>0.2.0</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <!--
     LSUIElement = true makes Halo an agent: no Dock icon, no
@@ -34,6 +34,13 @@
     runtime and the Now Playing card stays empty.
   -->
   <key>NSAppleEventsUsageDescription</key>
-  <string>Halo asks Spotify and Music for the currently-playing track so the island can show it with album cover, scrubber, and playback controls.</string>
+  <string>Halo asks Spotify and Music for the currently-playing track so the island can show it with album cover, scrubber, and playback controls. It also reads the active tab title from Safari, Chrome, Arc, Brave, and Edge for the browser-tab pill.</string>
+  <!--
+    Read-only EventKit access for the next-event countdown
+    pill. Halo never writes events; the prompt fires the
+    first time the Calendar publisher starts.
+  -->
+  <key>NSCalendarsUsageDescription</key>
+  <string>Halo reads upcoming Calendar events to show a countdown to your next meeting in the island.</string>
 </dict>
 </plist>

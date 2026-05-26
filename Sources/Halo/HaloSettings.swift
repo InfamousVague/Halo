@@ -53,6 +53,48 @@ enum HaloSettings {
         UserDefaults.standard.set(on, forKey: "halo.publisher.stats")
     }
 
+    static var batteryEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.battery")
+    }
+    static func setBatteryEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.battery")
+    }
+
+    static var vpnEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.vpn")
+    }
+    static func setVPNEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.vpn")
+    }
+
+    static var calendarEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.calendar")
+    }
+    static func setCalendarEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.calendar")
+    }
+
+    static var githubEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.github")
+    }
+    static func setGithubEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.github")
+    }
+
+    static var dockerEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.docker")
+    }
+    static func setDockerEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.docker")
+    }
+
+    static var browserTabEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.browser")
+    }
+    static func setBrowserTabEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "halo.publisher.browser")
+    }
+
     // MARK: - Suite apps (external publishers via the file store)
 
     /// Slot id matches the JSON filename the publisher writes

@@ -93,6 +93,36 @@ final class NotchHost: NSObject {
             s.start()
             publishers.append(s)
         }
+        if HaloSettings.batteryEnabled {
+            let b = BatteryPublisher(coordinator: coordinator)
+            b.start()
+            publishers.append(b)
+        }
+        if HaloSettings.vpnEnabled {
+            let v = VPNPublisher(coordinator: coordinator)
+            v.start()
+            publishers.append(v)
+        }
+        if HaloSettings.calendarEnabled {
+            let c = CalendarPublisher(coordinator: coordinator)
+            c.start()
+            publishers.append(c)
+        }
+        if HaloSettings.githubEnabled {
+            let g = GitHubPRPublisher(coordinator: coordinator)
+            g.start()
+            publishers.append(g)
+        }
+        if HaloSettings.dockerEnabled {
+            let d = DockerPublisher(coordinator: coordinator)
+            d.start()
+            publishers.append(d)
+        }
+        if HaloSettings.browserTabEnabled {
+            let b = BrowserTabPublisher(coordinator: coordinator)
+            b.start()
+            publishers.append(b)
+        }
     }
 
     private func stopPublishers() {
