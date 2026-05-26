@@ -92,22 +92,44 @@ struct NotchView: View {
     private var screenTopAccent: some View {
         if let a = activity {
             let color = Self.accentColor(for: a)
-            // Line emanates from the bottom-centre of the
-            // island and extends horizontally — not the top
-            // edge of the screen. Width animates 0 → full
-            // screen width; Y tracks the pill's bottom so
-            // the stroke sits just beneath the menu-bar band.
+            // Two-branch trace that grows symmetrically from
+            // the pill's bottom-centre. Each branch follows
+            // the island's contour: along the bottom edge,
+            // through the rounded bottom corner, up the side,
+            // through the concave bite where the pill meets
+            // the screen, and finally out along the screen's
+            // top edge to the side of the display. Both
+            // branches are trimmed by `borderProgress` so the
+            // outline appears to "draw itself" outward.
             let frame = Geometry.islandFrame(
                 for: a, layout: layout, expanded: isExpanded)
-            Rectangle()
-                .fill(color)
-                .frame(
-                    width: layout.screenWidth * borderProgress,
-                    height: 2)
-                .position(x: layout.notchCenterX,
-                          y: frame.maxY - 1)
-                .opacity(borderOpacity)
-                .allowsHitTesting(false)
+            let stroke = StrokeStyle(
+                lineWidth: 2,
+                lineCap: .round,
+                lineJoin: .round)
+            ZStack {
+                ScreenAccentTrace(
+                    side: .right,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .trim(from: 0, to: borderProgress)
+                .stroke(color, style: stroke)
+                ScreenAccentTrace(
+                    side: .left,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .trim(from: 0, to: borderProgress)
+                .stroke(color, style: stroke)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(borderOpacity)
+            .allowsHitTesting(false)
         }
     }
 
@@ -171,11 +193,17 @@ struct NotchView: View {
     private func triggerBorderTrace() {
         borderProgress = 0
         borderOpacity = 1
-        withAnimation(.easeOut(duration: 0.7)) {
+        // 0.9s feels right: the contour leg (corner + side +
+        // concave bite) is short relative to the horizontal
+        // screen-edge extension, so most of the animation
+        // visually "shoots out" to the screen edges; ease-out
+        // keeps the contour part deliberate before the line
+        // accelerates outward.
+        withAnimation(.easeOut(duration: 0.9)) {
             borderProgress = 1
         }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 800_000_000)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation(.easeIn(duration: 0.5)) {
                 borderOpacity = 0
             }
@@ -588,6 +616,106 @@ private struct IslandShape: Shape {
             clockwise: true)             // short arc via -45°
 
         p.closeSubpath()
+        return p
+    }
+}
+
+/// One half of the contour-trace accent. Builds the path from
+/// the pill's bottom-centre outward — along the bottom edge,
+/// through the convex bottom corner, up the side, through the
+/// concave bite, and finally along the screen's top edge out to
+/// the screen's left/right edge. Two copies (one per `Side`)
+/// are stacked in `screenTopAccent`, each trimmed by
+/// `borderProgress` so the line appears to draw itself outward
+/// from the centre.
+///
+/// All coordinates are in the panel's local space (origin
+/// top-left). The path uses `islandFrame` and `screenWidth`
+/// directly rather than the parent rect, so the parent only
+/// needs to size the shape large enough to contain the panel.
+///
+/// Arc-direction convention: SwiftUI's `Path.addArc` treats
+/// `clockwise` in the legacy y-up sense, so `clockwise: false`
+/// here produces visually-clockwise short arcs on screen and
+/// vice-versa. Mirrors `IslandShape`.
+private struct ScreenAccentTrace: Shape {
+    enum Side { case left, right }
+    var side: Side
+    var islandFrame: CGRect
+    var screenWidth: CGFloat
+    var punchRadius: CGFloat
+    var bottomCornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let pr = punchRadius
+        let br = min(bottomCornerRadius, islandFrame.height / 2)
+        let pillLeft = islandFrame.minX + pr
+        let pillRight = islandFrame.maxX - pr
+        let topY = islandFrame.minY
+        let bottomY = islandFrame.maxY
+
+        var p = Path()
+        // Both branches start at the bottom-centre of the pill.
+        p.move(to: CGPoint(x: islandFrame.midX, y: bottomY))
+
+        switch side {
+        case .right:
+            // Bottom edge → entry point of the rounded corner.
+            p.addLine(to: CGPoint(x: pillRight - br, y: bottomY))
+            // Bottom-right convex corner: south → east (the
+            // reverse of `IslandShape`'s clockwise traversal,
+            // hence `clockwise: true` rather than false).
+            p.addArc(
+                center: CGPoint(x: pillRight - br,
+                                y: bottomY - br),
+                radius: br,
+                startAngle: .degrees(90),
+                endAngle: .degrees(0),
+                clockwise: true)
+            // Up the pill's right edge to the concave bite.
+            p.addLine(to: CGPoint(x: pillRight, y: topY + pr))
+            // Right concave arc: west → north through the NW
+            // quadrant of the masking circle that lives just
+            // outside the pill at (frame.maxX, topY + pr).
+            p.addArc(
+                center: CGPoint(x: islandFrame.maxX,
+                                y: topY + pr),
+                radius: pr,
+                startAngle: .degrees(180),
+                endAngle: .degrees(270),
+                clockwise: false)
+            // Along the screen's top edge to its right side.
+            p.addLine(to: CGPoint(x: screenWidth, y: topY))
+
+        case .left:
+            // Bottom edge → entry point of the rounded corner.
+            p.addLine(to: CGPoint(x: pillLeft + br, y: bottomY))
+            // Bottom-left convex corner: south → west. Same
+            // direction as `IslandShape` so the convention
+            // matches (`clockwise: false`).
+            p.addArc(
+                center: CGPoint(x: pillLeft + br,
+                                y: bottomY - br),
+                radius: br,
+                startAngle: .degrees(90),
+                endAngle: .degrees(180),
+                clockwise: false)
+            // Up the pill's left edge to the concave bite.
+            p.addLine(to: CGPoint(x: pillLeft, y: topY + pr))
+            // Left concave arc: east → north through the NE
+            // quadrant of the masking circle at
+            // (frame.minX, topY + pr). Same orientation as
+            // `IslandShape`'s left wing concave.
+            p.addArc(
+                center: CGPoint(x: islandFrame.minX,
+                                y: topY + pr),
+                radius: pr,
+                startAngle: .degrees(0),
+                endAngle: .degrees(-90),
+                clockwise: true)
+            // Along the screen's top edge to its left side.
+            p.addLine(to: CGPoint(x: 0, y: topY))
+        }
         return p
     }
 }
