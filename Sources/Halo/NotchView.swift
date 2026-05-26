@@ -366,6 +366,28 @@ struct NotchView: View {
         }
     }
 
+    /// Off-white tinted by the publisher's brand colour — used
+    /// for the leading icon, the trailing text, and the time
+    /// read-out in the expanded music card so each pill picks
+    /// up a hint of its identity (Espresso a creamy tan,
+    /// Spotify a pale green, etc.) without losing the readable
+    /// near-white text style.
+    static func pillTextColor(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> Color {
+        let brand = accentColor(for: a)
+        let ns = NSColor(brand)
+            .usingColorSpace(.deviceRGB) ?? .white
+        // 25% brand mixed into white. Subtle by design — the
+        // pill should read as "near white with a hue," not
+        // "coloured text."
+        let amount: CGFloat = 0.25
+        return Color(
+            red: 1.0 - amount * (1.0 - ns.redComponent),
+            green: 1.0 - amount * (1.0 - ns.greenComponent),
+            blue: 1.0 - amount * (1.0 - ns.blueComponent))
+    }
+
     private static func brandColor(forID id: String) -> Color? {
         switch id {
         case "halo.volume":     return Color(red: 0.36, green: 0.66, blue: 1.00)
@@ -404,10 +426,12 @@ struct NotchView: View {
                 .id("lead-art-\(a.media?.title ?? "")")
                 .transition(.opacity)
         } else if let img = a.compactLeadingImage {
-            // B&W scheme — every glyph tints white, ignoring
-            // the publisher's tintHex. 90% so the icon reads
-            // as supporting content next to 100% primary text
-            // (the "data" side gets full punch).
+            // Tinted-near-white scheme — each pill picks up a
+            // hint of its publisher's brand colour (Espresso
+            // tan, Spotify green, etc.) without losing the
+            // readable B&W feel. 90% opacity so the icon reads
+            // as supporting content next to the 100% trailing
+            // text.
             //
             // `tintImage` builds a fresh NSImage every render,
             // so when the trailing text ticks (Espresso's 1Hz
@@ -416,7 +440,8 @@ struct NotchView: View {
             // "flashing" on every second. Opt out of that
             // animation explicitly; the icon itself doesn't
             // need to animate on text changes.
-            Image(nsImage: tintImage(img, color: .white))
+            Image(nsImage: tintImage(
+                img, color: Self.pillTextColor(for: a)))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
@@ -442,14 +467,17 @@ struct NotchView: View {
             // roll. Espresso's 1Hz countdown / music position
             // / volume HUD percentages now ticker rather than
             // crossfade.
-            Self.dimmedUnitsText(text)
+            Self.dimmedUnitsText(
+                text,
+                baseColor: Self.pillTextColor(for: a))
                 .font(.system(size: 13))
                 .lineLimit(1)
                 .fixedSize()
                 .contentTransition(.numericText())
                 .id("trail-text-\(a.id)")
         } else if let img = a.compactTrailingImage {
-            Image(nsImage: tintImage(img, color: .white))
+            Image(nsImage: tintImage(
+                img, color: Self.pillTextColor(for: a)))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)
@@ -475,7 +503,10 @@ struct NotchView: View {
     ///   each numeric group (`0`*1*:23, *0*5m 23s) so the
     ///   eye reads the magnitude without losing the constant
     ///   width that prevents pill reflow.
-    static func dimmedUnitsText(_ s: String) -> Text {
+    static func dimmedUnitsText(
+        _ s: String,
+        baseColor: Color = .white
+    ) -> Text {
         var result = Text("")
         let chars = Array(s)
         // Detect "this is a numeric label" — a digit
@@ -534,8 +565,8 @@ struct NotchView: View {
             let piece = Text(String(ch))
                 .foregroundStyle(
                     isUnit
-                        ? Color.white.opacity(0.5)
-                        : Color.white)
+                        ? baseColor.opacity(0.5)
+                        : baseColor)
             result = result + piece
         }
         return result

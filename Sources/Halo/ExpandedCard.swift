@@ -304,7 +304,9 @@ private struct NowPlayingExpandedView: View {
         let pos = Self.formatTime(livePosition)
         let dur = Self.formatTime(duration)
         return NotchView
-            .dimmedUnitsText("\(pos) / \(dur)")
+            .dimmedUnitsText(
+                "\(pos) / \(dur)",
+                baseColor: NotchView.pillTextColor(for: activity))
             .font(.system(size: 10,
                           weight: .medium,
                           design: .rounded))
