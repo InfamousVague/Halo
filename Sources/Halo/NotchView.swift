@@ -55,6 +55,12 @@ struct NotchView: View {
     /// running so a rapid second activity change doesn't wipe
     /// out the underlay the *new* trace still needs.
     @State private var traceToken: UUID = UUID()
+    /// Last `cycleSlot` we saw, so we can tell whether an
+    /// activity-id change came from a user tap-to-cycle
+    /// (cycleSlot also advanced — no trace) or from a new
+    /// publisher / priority shift (cycleSlot unchanged —
+    /// play the trace-in → hold → trace-out animation).
+    @State private var lastCycleSlot: Int = 0
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -99,9 +105,19 @@ struct NotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: activity?.id) { _, _ in
-            if activity != nil { triggerBorderTrace() }
+            guard activity != nil else { return }
+            // A user tap-cycle bumps `cycleSlot` alongside the
+            // id change; a new publisher / priority shift does
+            // not. Only the latter should re-fire the trace.
+            let isCycle = cycleSlot != lastCycleSlot
+            lastCycleSlot = cycleSlot
+            if !isCycle { triggerBorderTrace() }
+        }
+        .onChange(of: cycleSlot) { _, new in
+            lastCycleSlot = new
         }
         .onAppear {
+            lastCycleSlot = cycleSlot
             if activity != nil { triggerBorderTrace() }
         }
     }
@@ -248,30 +264,51 @@ struct NotchView: View {
     /// card with a competing accent line. The line bounces
     /// back out the next time the cursor leaves, via
     /// `animateHoverAccent`.
+    /// Play the new-item accent animation: trace the line in
+    /// over ~0.9s, hold it for 0.5s, then trace it back out
+    /// along the same path. The line is invisible the rest of
+    /// the time — this animation is a "notification" that a
+    /// new slide arrived, not persistent UI.
+    ///
+    /// Only fired by `.onChange(of: activity?.id)` when the
+    /// id change was *not* a user tap-cycle (those are
+    /// silent).
     private func triggerBorderTrace() {
         guard let a = activity else { return }
         let newColor = Self.accentColor(for: a)
         let token = UUID()
         traceToken = token
-        // Promote the current colour to "previous" (if we had
-        // one) so the new line paints over it from the
-        // bottom-centre out rather than flashing through a
-        // blank top edge.
+        // Promote the current colour to "previous" — handles
+        // the in-flight case where another new activity
+        // arrives mid trace-in / hold. The previous-colour
+        // stroke sits under the new one so the new colour
+        // paints over the visible portion of the old line
+        // instead of flashing through. The underlay is cleared
+        // before the trace-out so it doesn't leak old colour
+        // into the fade-away.
         if let cur = currentAccentColor {
             previousAccentColor = cur
         }
         currentAccentColor = newColor
         borderProgress = 0
-        withAnimation(.easeOut(duration: 0.9)) {
+        let traceInSeconds: Double = 0.9
+        let holdSeconds: Double = 0.5
+        let traceOutSeconds: Double = 0.9
+        withAnimation(.easeOut(duration: traceInSeconds)) {
             borderProgress = 1
         }
         Task { @MainActor in
-            // Hold the underlay slightly past the trace's
-            // finish so the new line has fully painted over
-            // every pixel of the old one before we drop it.
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if traceToken == token {
-                previousAccentColor = nil
+            // Wait through the trace-in + hold.
+            let holdNanos = UInt64(
+                (traceInSeconds + holdSeconds) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: holdNanos)
+            guard traceToken == token else { return }
+            // Drop the underlay so the trace-out fades the
+            // current line cleanly, not over an old-colour
+            // shell.
+            previousAccentColor = nil
+            withAnimation(.easeIn(duration: traceOutSeconds)) {
+                borderProgress = 0
             }
         }
     }
