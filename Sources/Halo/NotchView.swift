@@ -37,10 +37,9 @@ struct NotchView: View {
     /// 0 → 1: how far the border trace has expanded from
     /// top-centre. Animated when a new activity takes the
     /// slot. 0 = no border visible, 1 = full perimeter drawn.
+    /// Once drawn (=1) the line stays rendered until the
+    /// activity changes — it doesn't fade out anymore.
     @State private var borderProgress: Double = 0
-    /// 0 → 1: how visible the border is. Held at 1 while the
-    /// trace draws, then fades to 0 over ~400ms.
-    @State private var borderOpacity: Double = 0
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -128,7 +127,19 @@ struct NotchView: View {
                 .stroke(color, style: stroke)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .opacity(borderOpacity)
+            // Match the island's hover-expansion spring so the
+            // contour morphs in lock-step with the pill rather
+            // than snapping to the new frame. `ScreenAccentTrace`
+            // is `Animatable` on its `islandFrame`, so this
+            // animation propagates through to the path
+            // coordinates and the trace stretches / contracts
+            // alongside the pill body.
+            .animation(.spring(response: 0.42,
+                               dampingFraction: 0.84),
+                       value: isExpanded)
+            .animation(.spring(response: 0.32,
+                               dampingFraction: 0.86),
+                       value: a.compactTrailingText)
             .allowsHitTesting(false)
         }
     }
@@ -187,12 +198,14 @@ struct NotchView: View {
         .onTapGesture { onTap() }
     }
 
-    /// Kick off the screen-top accent: width grows from 0 to
-    /// the full screen width over ~700ms, then opacity fades
-    /// to 0 over ~500ms. Re-entry resets the animation cleanly.
+    /// Kick off the screen-top accent: the trace grows from
+    /// 0 to 1 over ~0.9s and then **stays drawn**. The line
+    /// only disappears when the activity itself goes away (the
+    /// `if let a = activity` guard above strips the view), or
+    /// when the next activity takes the slot and resets the
+    /// progress for its own re-trace.
     private func triggerBorderTrace() {
         borderProgress = 0
-        borderOpacity = 1
         // 0.9s feels right: the contour leg (corner + side +
         // concave bite) is short relative to the horizontal
         // screen-edge extension, so most of the animation
@@ -201,12 +214,6 @@ struct NotchView: View {
         // accelerates outward.
         withAnimation(.easeOut(duration: 0.9)) {
             borderProgress = 1
-        }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            withAnimation(.easeIn(duration: 0.5)) {
-                borderOpacity = 0
-            }
         }
     }
 
@@ -645,6 +652,33 @@ private struct ScreenAccentTrace: Shape {
     var screenWidth: CGFloat
     var punchRadius: CGFloat
     var bottomCornerRadius: CGFloat
+
+    /// Interpolates the four `islandFrame` components so SwiftUI
+    /// can smoothly tween the contour when the pill expands /
+    /// contracts on hover. Without this conformance the Shape's
+    /// path would snap to the new geometry at the start of the
+    /// animation instead of growing in lockstep with the pill.
+    var animatableData:
+        AnimatablePair<
+            AnimatablePair<CGFloat, CGFloat>,
+            AnimatablePair<CGFloat, CGFloat>
+        >
+    {
+        get {
+            AnimatablePair(
+                AnimatablePair(islandFrame.origin.x,
+                               islandFrame.origin.y),
+                AnimatablePair(islandFrame.size.width,
+                               islandFrame.size.height))
+        }
+        set {
+            islandFrame = CGRect(
+                x: newValue.first.first,
+                y: newValue.first.second,
+                width: newValue.second.first,
+                height: newValue.second.second)
+        }
+    }
 
     func path(in rect: CGRect) -> Path {
         let pr = punchRadius

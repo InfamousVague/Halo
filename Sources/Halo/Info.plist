@@ -7,8 +7,8 @@
   <key>CFBundleIdentifier</key><string>com.mattssoftware.halo</string>
   <key>CFBundleExecutable</key><string>Halo</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.4</string>
-  <key>CFBundleVersion</key><string>1.0.4</string>
+  <key>CFBundleShortVersionString</key><string>1.0.5</string>
+  <key>CFBundleVersion</key><string>1.0.5</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <!--
     LSUIElement = true makes Halo an agent: no Dock icon, no
