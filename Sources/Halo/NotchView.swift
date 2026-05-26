@@ -67,35 +67,35 @@ struct NotchView: View {
         ZStack(alignment: .topLeading) {
             Color.clear
             if let a = activity {
-                island(for: a)
-                    // Spring on every visible attribute — frame
-                    // width / height, icon, text — so the pill
-                    // morphs smoothly when any of them change.
-                    // Hover-expansion spring matches the one
-                    // on `screenTopAccent` exactly so the pill
-                    // and the accent line morph in lockstep
-                    // through their shared `islandFrame`.
-                    .animation(.spring(response: 0.32,
-                                       dampingFraction: 0.86),
-                               value: a.id)
-                    .animation(.spring(response: 0.32,
-                                       dampingFraction: 0.86),
-                               value: a.compactTrailingText)
-                    .animation(.spring(response: 0.34,
-                                       dampingFraction: 0.9),
-                               value: isExpanded)
-                    .animation(.spring(response: 0.32,
-                                       dampingFraction: 0.86),
-                               value: cycleSlot)
+                // Both the pill and the screen-top accent live
+                // inside this ZStack so they share a single
+                // animation transaction. Applying the springs
+                // here (rather than on each child) guarantees
+                // that when `a.compactTrailingText`, `isExpanded`,
+                // etc. change, SwiftUI kicks off ONE animation
+                // covering both views — they then interpolate
+                // their respective animatable values (the pill's
+                // frame, the accent's `islandFrame`) on the
+                // exact same clock, so the line tracks the pill
+                // edge perfectly through every horizontal /
+                // vertical resize.
+                ZStack(alignment: .topLeading) {
+                    island(for: a)
+                    screenTopAccent(for: a)
+                }
+                .animation(.spring(response: 0.32,
+                                   dampingFraction: 0.86),
+                           value: a.id)
+                .animation(.spring(response: 0.32,
+                                   dampingFraction: 0.86),
+                           value: a.compactTrailingText)
+                .animation(.spring(response: 0.34,
+                                   dampingFraction: 0.9),
+                           value: isExpanded)
+                .animation(.spring(response: 0.32,
+                                   dampingFraction: 0.86),
+                           value: cycleSlot)
             }
-            // Screen-top accent line — 2px stroke at the very
-            // top edge of the display, painted in the new
-            // publisher's brand colour and expanding from the
-            // notch centre out to both screen edges when an
-            // activity claims the slot. Sits above the island
-            // shape (in the ZStack) and ignores hit tests so
-            // it never blocks menu-bar clicks.
-            screenTopAccent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: activity?.id) { _, _ in
@@ -107,84 +107,75 @@ struct NotchView: View {
     }
 
     @ViewBuilder
-    private var screenTopAccent: some View {
-        if let a = activity {
-            // Single 1pt stroke. The path runs from the pill's
-            // bottom-centre out to each screen edge, hugging
-            // the island's contour through the bottom corner,
-            // side, and concave bite before extending along
-            // the screen's top edge.
-            //
-            // Two strokes are stacked: the previously-drawn
-            // accent (in the prior activity's colour, at full
-            // progress) sits underneath, and the new accent
-            // traces in over the top of it. This avoids the
-            // brief blank flash that used to appear when the
-            // line reset to progress 0 between activities.
-            let frame = Geometry.islandFrame(
-                for: a, layout: layout, expanded: isExpanded)
-            let stroke = StrokeStyle(
-                lineWidth: 1,
-                lineCap: .round,
-                lineJoin: .round)
-            ZStack {
-                if let prev = previousAccentColor {
-                    ScreenAccentTrace(
-                        side: .right,
-                        islandFrame: frame,
-                        screenWidth: layout.screenWidth,
-                        punchRadius: punchRadius,
-                        bottomCornerRadius: bottomCornerRadius
-                    )
-                    .stroke(prev, style: stroke)
-                    ScreenAccentTrace(
-                        side: .left,
-                        islandFrame: frame,
-                        screenWidth: layout.screenWidth,
-                        punchRadius: punchRadius,
-                        bottomCornerRadius: bottomCornerRadius
-                    )
-                    .stroke(prev, style: stroke)
-                }
-                if let color = currentAccentColor {
-                    ScreenAccentTrace(
-                        side: .right,
-                        islandFrame: frame,
-                        screenWidth: layout.screenWidth,
-                        punchRadius: punchRadius,
-                        bottomCornerRadius: bottomCornerRadius
-                    )
-                    .trim(from: 0, to: borderProgress)
-                    .stroke(color, style: stroke)
-                    ScreenAccentTrace(
-                        side: .left,
-                        islandFrame: frame,
-                        screenWidth: layout.screenWidth,
-                        punchRadius: punchRadius,
-                        bottomCornerRadius: bottomCornerRadius
-                    )
-                    .trim(from: 0, to: borderProgress)
-                    .stroke(color, style: stroke)
-                }
+    private func screenTopAccent(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> some View {
+        // Single 1pt stroke. The path runs from the pill's
+        // bottom-centre out to each screen edge, hugging
+        // the island's contour through the bottom corner,
+        // side, and concave bite before extending along
+        // the screen's top edge.
+        //
+        // Two strokes are stacked: the previously-drawn
+        // accent (in the prior activity's colour, at full
+        // progress) sits underneath, and the new accent
+        // traces in over the top of it. This avoids the
+        // brief blank flash that used to appear when the
+        // line reset to progress 0 between activities.
+        //
+        // Animation transactions live on the parent ZStack
+        // alongside the pill, so the accent path's
+        // animatable `islandFrame` morphs in the same clock
+        // as the pill's `.frame()` — they're guaranteed to
+        // arrive at intermediate values simultaneously.
+        let frame = Geometry.islandFrame(
+            for: a, layout: layout, expanded: isExpanded)
+        let stroke = StrokeStyle(
+            lineWidth: 1,
+            lineCap: .round,
+            lineJoin: .round)
+        ZStack {
+            if let prev = previousAccentColor {
+                ScreenAccentTrace(
+                    side: .right,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .stroke(prev, style: stroke)
+                ScreenAccentTrace(
+                    side: .left,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .stroke(prev, style: stroke)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Springs match the island's *exactly* so the
-            // contour morphs in lock-step with the pill rather
-            // than snapping to the new frame or lagging behind
-            // it. `ScreenAccentTrace` is `Animatable` on its
-            // `islandFrame`, so these animations propagate
-            // through to the path coordinates and the trace
-            // stretches / contracts alongside the pill body
-            // whether the change comes from hover or from
-            // trailing-text width changes.
-            .animation(.spring(response: 0.34,
-                               dampingFraction: 0.9),
-                       value: isExpanded)
-            .animation(.spring(response: 0.32,
-                               dampingFraction: 0.86),
-                       value: a.compactTrailingText)
-            .allowsHitTesting(false)
+            if let color = currentAccentColor {
+                ScreenAccentTrace(
+                    side: .right,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .trim(from: 0, to: borderProgress)
+                .stroke(color, style: stroke)
+                ScreenAccentTrace(
+                    side: .left,
+                    islandFrame: frame,
+                    screenWidth: layout.screenWidth,
+                    punchRadius: punchRadius,
+                    bottomCornerRadius: bottomCornerRadius
+                )
+                .trim(from: 0, to: borderProgress)
+                .stroke(color, style: stroke)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
