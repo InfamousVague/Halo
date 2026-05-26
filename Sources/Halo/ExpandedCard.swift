@@ -23,6 +23,8 @@ struct ExpandedCard: View {
                 EspressoExpandedView(activity: activity)
             case "halo.nowplaying":
                 NowPlayingExpandedView(activity: activity)
+            case "worktree":
+                WorktreeExpandedView(activity: activity)
             default:
                 genericContent
             }
@@ -77,6 +79,119 @@ struct ExpandedCard: View {
         case "nowplaying":  return "NOW PLAYING"
         default:            return trimmed.uppercased()
         }
+    }
+}
+
+// MARK: - Worktree
+
+/// Branch switcher. Top row shows the current repo + branch +
+/// dirty marker; below it a list of OTHER local branches the
+/// user can switch to with a tap. Posts a distributed
+/// notification — Worktree's listener does the auto-stash +
+/// switch + pop on the other side.
+private struct WorktreeExpandedView: View {
+    let activity: LiveActivityCoordinator.Resolved
+
+    private var info: LiveActivityCoordinator.WorktreeInfo? {
+        activity.worktree
+    }
+
+    /// Branches other than the current one, alphabetised,
+    /// capped so the card doesn't grow huge. Anything past the
+    /// cap is reachable via the Worktree popover.
+    private var otherBranches: [String] {
+        guard let info else { return [] }
+        return info.branches
+            .filter { $0 != info.currentBranch }
+            .sorted()
+            .prefix(5)
+            .map { $0 }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header row — current state.
+            HStack(spacing: 10) {
+                if let img = activity.compactLeadingImage {
+                    Image(nsImage: img)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(.white)
+                }
+                Text(currentLabel)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                if (info?.isDirty ?? false) {
+                    Text("dirty")
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(
+                                Color.orange.opacity(0.25)))
+                        .foregroundStyle(.orange)
+                }
+                Spacer(minLength: 0)
+            }
+            if !otherBranches.isEmpty {
+                Divider()
+                    .background(Color.white.opacity(0.12))
+                VStack(spacing: 4) {
+                    ForEach(otherBranches, id: \.self) { b in
+                        BranchRow(name: b) {
+                            switchTo(b)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var currentLabel: String {
+        guard let info else { return "WORKTREE" }
+        let repo = (info.repoPath as NSString).lastPathComponent
+        return "\(repo) · \(info.currentBranch)"
+    }
+
+    private func switchTo(_ branch: String) {
+        DistributedNotificationCenter.default()
+            .postNotificationName(
+                Notification.Name(
+                    "com.mattssoftware.worktree.switchBranch"),
+                object: branch,
+                deliverImmediately: true)
+    }
+}
+
+private struct BranchRow: View {
+    let name: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.55))
+                Text(name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5,
+                                 style: .continuous)
+                    .fill(Color.white.opacity(0.06)))
+        }
+        .buttonStyle(.plain)
     }
 }
 

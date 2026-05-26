@@ -122,7 +122,21 @@ struct NotchView: View {
     private func leadingContent(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        if let img = a.compactLeadingImage {
+        if let artwork = a.media?.artwork {
+            // Album cover takes precedence over the generic
+            // music-note symbol when we have it. Full colour
+            // (not template-tinted) and clipped to a small
+            // rounded square so it reads like a Spotify /
+            // Music thumbnail rather than a glyph.
+            Image(nsImage: artwork)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 3,
+                                            style: .continuous))
+                .id("lead-art-\(a.media?.title ?? "")")
+                .transition(.opacity)
+        } else if let img = a.compactLeadingImage {
             // B&W scheme — every glyph tints white, ignoring
             // the publisher's tintHex. `.id(a.id)` + transition
             // forces a crossfade when the displayed activity
@@ -248,6 +262,14 @@ enum Geometry {
         case "halo.nowplaying":
             // 44pt artwork ≥ title+artist+scrubber stack
             content = 50
+        case "worktree":
+            // Header row + divider + up to 5 branch rows ×
+            // ~26pt each. Real branch count caps the height
+            // dynamically by way of the empty VStack.
+            let branchCount = min(5, max(0,
+                (a?.worktree?.branches.count ?? 1) - 1))
+            content = 24 /* header */ + 12 /* divider+pad */
+                + CGFloat(branchCount) * 26
         default:
             // Generic row: 26pt icon + spacing ≈ 30pt
             content = 30

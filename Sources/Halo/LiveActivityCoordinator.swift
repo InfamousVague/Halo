@@ -35,6 +35,10 @@ final class LiveActivityCoordinator {
         /// Now Playing. Drives the expanded card's artwork +
         /// scrubber + controls.
         let media: MediaInfo?
+        /// Optional Worktree-specific payload — populated only
+        /// for the `worktree` slot. Drives the branch-switcher
+        /// dropdown in the expanded card.
+        let worktree: WorktreeInfo?
 
         init(
             id: String,
@@ -43,7 +47,8 @@ final class LiveActivityCoordinator {
             compactTrailingImage: NSImage?,
             tint: Color,
             priority: Int,
-            media: MediaInfo? = nil
+            media: MediaInfo? = nil,
+            worktree: WorktreeInfo? = nil
         ) {
             self.id = id
             self.compactLeadingImage = compactLeadingImage
@@ -52,6 +57,7 @@ final class LiveActivityCoordinator {
             self.tint = tint
             self.priority = priority
             self.media = media
+            self.worktree = worktree
         }
 
         static func == (l: Resolved, r: Resolved) -> Bool {
@@ -60,8 +66,19 @@ final class LiveActivityCoordinator {
             l.priority == r.priority &&
             l.tint == r.tint &&
             l.media?.title == r.media?.title &&
-            l.media?.isPlaying == r.media?.isPlaying
+            l.media?.isPlaying == r.media?.isPlaying &&
+            l.worktree?.currentBranch == r.worktree?.currentBranch &&
+            l.worktree?.branches == r.worktree?.branches &&
+            l.worktree?.isDirty == r.worktree?.isDirty
         }
+    }
+
+    /// Branch-switch payload Halo decodes from `worktree.json`.
+    struct WorktreeInfo: Equatable {
+        let repoPath: String
+        let currentBranch: String
+        let branches: [String]
+        let isDirty: Bool
     }
 
     /// Rich Now Playing payload. Position / duration are in
@@ -364,13 +381,21 @@ final class LiveActivityCoordinator {
                     SuiteLiveActivityStore.Payload.self, from: data)
             else { continue }
             if now - p.updatedAt > payloadTTL { continue }
+            let worktreeInfo = p.worktree.map { w in
+                WorktreeInfo(
+                    repoPath: w.repoPath,
+                    currentBranch: w.currentBranch,
+                    branches: w.branches,
+                    isDirty: w.isDirty)
+            }
             out.append(Resolved(
                 id: id,
                 compactLeadingImage: Self.symbolImage(p.compactLeadingSymbol),
                 compactTrailingText: p.compactTrailingText,
                 compactTrailingImage: Self.symbolImage(p.compactTrailingSymbol),
                 tint: Self.color(hex: p.tintHex),
-                priority: p.priority
+                priority: p.priority,
+                worktree: worktreeInfo
             ))
         }
         return out
