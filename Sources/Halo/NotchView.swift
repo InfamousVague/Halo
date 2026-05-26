@@ -205,7 +205,10 @@ enum Geometry {
         if expanded {
             totalWidth += hoverExtraWidth * 2
         }
-        let totalHeight = layout.menuBarHeight
+        // +1pt overlap onto the menu-bar bottom border — the
+        // pill reads as flush with the menu bar otherwise the
+        // anti-aliased boundary leaves a 1px seam.
+        let totalHeight = layout.menuBarHeight + 1
         let leftEdge = layout.notchCenterX - totalWidth / 2
         return CGRect(
             x: leftEdge, y: 0,
