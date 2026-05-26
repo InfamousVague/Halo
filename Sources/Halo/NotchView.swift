@@ -34,26 +34,25 @@ struct NotchView: View {
     /// pill itself.
     var onTap: () -> Void = {}
 
-    /// 0 → 1: how far the contour trace has expanded from the
-    /// pill's bottom-centre. Animated when a new activity
-    /// takes the slot. 0 = no line visible, 1 = full path
-    /// drawn. Stays at 1 until the activity changes (or
-    /// disappears), then resets for the next re-trace.
-    @State private var borderProgress: Double = 0
-    /// Colour of the line that's *currently* being drawn (or
-    /// is fully drawn). Set inside `triggerBorderTrace`. Nil
-    /// means we've never seen an activity yet.
+    /// Start of the visible trim window along the accent
+    /// path. 0 = at the bottom-centre of the pill; 1 = at the
+    /// screen's far edge. Animated **second**, after `traceTo`
+    /// completes — the back end of the line then chases the
+    /// front, "leaving" via the screen edges.
+    @State private var traceFrom: Double = 0
+    /// End of the visible trim window. 0 = at the
+    /// bottom-centre; 1 = at the screen's far edge. Animated
+    /// **first** — the front end of the line emanates outward
+    /// to full extent before the back end starts moving.
+    @State private var traceTo: Double = 0
+    /// Colour of the line currently being drawn. Set inside
+    /// `triggerBorderTrace`. Nil means we've never seen an
+    /// activity yet.
     @State private var currentAccentColor: Color?
-    /// Colour of the *previously*-drawn line. Held under the
-    /// current trace at full opacity / full progress so the
-    /// new trace paints over it from the bottom-centre out
-    /// instead of flashing through a blank top edge. Cleared
-    /// shortly after the current trace finishes.
-    @State private var previousAccentColor: Color?
     /// Identifier for the in-flight trace. The trailing task
-    /// that clears `previousAccentColor` checks this before
-    /// running so a rapid second activity change doesn't wipe
-    /// out the underlay the *new* trace still needs.
+    /// that runs phase 2 checks this so a rapid second
+    /// activity change doesn't have phase 2 from the old
+    /// trace clobber the new one.
     @State private var traceToken: UUID = UUID()
     /// Last `cycleSlot` we saw, so we can tell whether an
     /// activity-id change came from a user tap-to-cycle
@@ -163,24 +162,25 @@ struct NotchView: View {
     private func screenTopAccent(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        // Single 1pt stroke. The path runs from the pill's
-        // bottom-centre out to each screen edge, hugging
-        // the island's contour through the bottom corner,
-        // side, and concave bite before extending along
-        // the screen's top edge.
+        // Single 1pt stroke per side. The path runs from the
+        // pill's bottom-centre out to each screen edge,
+        // hugging the island's contour through the bottom
+        // corner, side, and concave bite before extending
+        // along the screen's top edge.
         //
-        // Two strokes are stacked: the previously-drawn
-        // accent (in the prior activity's colour, at full
-        // progress) sits underneath, and the new accent
-        // traces in over the top of it. This avoids the
-        // brief blank flash that used to appear when the
-        // line reset to progress 0 between activities.
+        // The visible window is `trim(from: traceFrom, to:
+        // traceTo)`. Phase 1 advances `traceTo` from 0 to 1
+        // (line emanates outward from the centre); phase 2
+        // advances `traceFrom` from 0 to 1 (the back end of
+        // the line then chases the front, the whole stroke
+        // continuing outward and "leaving" via the screen
+        // edges) — no rest in between, one fluid motion.
         //
         // Animation transactions live on the parent ZStack
-        // alongside the pill, so the accent path's
-        // animatable `islandFrame` morphs in the same clock
-        // as the pill's `.frame()` — they're guaranteed to
-        // arrive at intermediate values simultaneously.
+        // alongside the pill, so the accent path's animatable
+        // `islandFrame` morphs in the same clock as the pill's
+        // `.frame()` — both interpolate together through any
+        // width changes during the trace.
         let frame = Geometry.islandFrame(
             for: a, layout: layout, expanded: isExpanded)
         let stroke = StrokeStyle(
@@ -188,24 +188,6 @@ struct NotchView: View {
             lineCap: .round,
             lineJoin: .round)
         ZStack {
-            if let prev = previousAccentColor {
-                ScreenAccentTrace(
-                    side: .right,
-                    islandFrame: frame,
-                    screenWidth: layout.screenWidth,
-                    punchRadius: punchRadius,
-                    bottomCornerRadius: bottomCornerRadius
-                )
-                .stroke(prev, style: stroke)
-                ScreenAccentTrace(
-                    side: .left,
-                    islandFrame: frame,
-                    screenWidth: layout.screenWidth,
-                    punchRadius: punchRadius,
-                    bottomCornerRadius: bottomCornerRadius
-                )
-                .stroke(prev, style: stroke)
-            }
             if let color = currentAccentColor {
                 ScreenAccentTrace(
                     side: .right,
@@ -214,7 +196,7 @@ struct NotchView: View {
                     punchRadius: punchRadius,
                     bottomCornerRadius: bottomCornerRadius
                 )
-                .trim(from: 0, to: borderProgress)
+                .trim(from: traceFrom, to: traceTo)
                 .stroke(color, style: stroke)
                 ScreenAccentTrace(
                     side: .left,
@@ -223,7 +205,7 @@ struct NotchView: View {
                     punchRadius: punchRadius,
                     bottomCornerRadius: bottomCornerRadius
                 )
-                .trim(from: 0, to: borderProgress)
+                .trim(from: traceFrom, to: traceTo)
                 .stroke(color, style: stroke)
             }
         }
@@ -301,51 +283,42 @@ struct NotchView: View {
     /// card with a competing accent line. The line bounces
     /// back out the next time the cursor leaves, via
     /// `animateHoverAccent`.
-    /// Play the new-item accent animation: trace the line in
-    /// over ~0.9s, hold it for 0.5s, then trace it back out
-    /// along the same path. The line is invisible the rest of
-    /// the time — this animation is a "notification" that a
-    /// new slide arrived, not persistent UI.
+    /// Play the new-item accent animation as a single fluid
+    /// motion: the line emanates from the bottom-centre out
+    /// to the screen edges (phase 1), then the back end of
+    /// the line continues outward along the same path,
+    /// "leaving" via the edges (phase 2). The two phases run
+    /// back-to-back with no hold between them, so the trim
+    /// window slides outward at a constant speed.
     ///
     /// Only fired by `.onChange(of: activity?.id)` when the
     /// id change was *not* a user tap-cycle (those are
     /// silent).
     private func triggerBorderTrace() {
         guard let a = activity else { return }
-        let newColor = Self.accentColor(for: a)
+        currentAccentColor = Self.accentColor(for: a)
         let token = UUID()
         traceToken = token
-        // Promote the current colour to "previous" — handles
-        // the in-flight case where another new activity
-        // arrives mid trace-in / hold. The previous-colour
-        // stroke sits under the new one so the new colour
-        // paints over the visible portion of the old line
-        // instead of flashing through. The underlay is cleared
-        // before the trace-out so it doesn't leak old colour
-        // into the fade-away.
-        if let cur = currentAccentColor {
-            previousAccentColor = cur
+        traceFrom = 0
+        traceTo = 0
+        let phase1Seconds: Double = 0.9
+        let phase2Seconds: Double = 0.9
+        // Phase 1 — the leading edge sweeps from centre out to
+        // each screen edge. Linear so the speed matches phase 2.
+        withAnimation(.linear(duration: phase1Seconds)) {
+            traceTo = 1
         }
-        currentAccentColor = newColor
-        borderProgress = 0
-        let traceInSeconds: Double = 0.9
-        let holdSeconds: Double = 0.5
-        let traceOutSeconds: Double = 0.9
-        withAnimation(.easeOut(duration: traceInSeconds)) {
-            borderProgress = 1
-        }
+        // Phase 2 — the trailing edge does the same sweep at
+        // the same speed, eating the line from the centre
+        // outward until it's gone. Kicks off the instant
+        // phase 1 finishes.
         Task { @MainActor in
-            // Wait through the trace-in + hold.
-            let holdNanos = UInt64(
-                (traceInSeconds + holdSeconds) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: holdNanos)
+            let waitNanos = UInt64(
+                phase1Seconds * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: waitNanos)
             guard traceToken == token else { return }
-            // Drop the underlay so the trace-out fades the
-            // current line cleanly, not over an old-colour
-            // shell.
-            previousAccentColor = nil
-            withAnimation(.easeIn(duration: traceOutSeconds)) {
-                borderProgress = 0
+            withAnimation(.linear(duration: phase2Seconds)) {
+                traceFrom = 1
             }
         }
     }
