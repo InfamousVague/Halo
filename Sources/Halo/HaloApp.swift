@@ -90,7 +90,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             airpodsBinding: Self.publisherBinding(
                 host: self,
                 get: { HaloSettings.airpodsEnabled },
-                set: HaloSettings.setAirpodsEnabled)
+                set: HaloSettings.setAirpodsEnabled),
+            // Suite-slot toggles write to UserDefaults
+            // directly inside each row's binding; here we just
+            // poke the coordinator to re-poll so the change
+            // appears immediately (otherwise it waits up to 1s
+            // for the next scheduled tick).
+            onSuiteToggle: { [weak self] in
+                self?.notchHost.coordinator.refreshNow()
+            }
         )
         let hc = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hc)
@@ -123,10 +131,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Settings window. Master "Show the island" toggle on top, then
-/// a per-publisher list so users can turn off any feature that
-/// duplicates a tool they already run (e.g. someone with a
-/// MediaMate-style HUD already installed switches ours off).
+/// Full settings window — TabView with sections for General,
+/// Features (Halo's built-in publishers), Suite (per-suite-app
+/// visibility), and About. Designed to look at home next to
+/// the system's own Settings panes.
 private struct SettingsView: View {
     let onQuit: () -> Void
     @Binding var isEnabledBinding: Bool
@@ -134,48 +142,235 @@ private struct SettingsView: View {
     @Binding var brightnessBinding: Bool
     @Binding var nowPlayingBinding: Bool
     @Binding var airpodsBinding: Bool
+    let onSuiteToggle: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "rectangle.dashed.and.paperclip")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.tint)
-                Text("HALO")
-                    .font(.system(size: 12, weight: .bold))
-                    .tracking(2)
-                Spacer()
+        TabView {
+            GeneralTab(
+                isEnabledBinding: $isEnabledBinding,
+                onQuit: onQuit)
+                .tabItem {
+                    Label("General",
+                          systemImage: "gearshape")
+                }
+            FeaturesTab(
+                volumeBinding: $volumeBinding,
+                brightnessBinding: $brightnessBinding,
+                nowPlayingBinding: $nowPlayingBinding,
+                airpodsBinding: $airpodsBinding,
+                isMasterOn: isEnabledBinding)
+                .tabItem {
+                    Label("Features",
+                          systemImage: "slider.horizontal.3")
+                }
+            SuiteTab(
+                onSuiteToggle: onSuiteToggle,
+                isMasterOn: isEnabledBinding)
+                .tabItem {
+                    Label("Suite",
+                          systemImage: "square.grid.2x2")
+                }
+            AboutTab()
+                .tabItem {
+                    Label("About",
+                          systemImage: "info.circle")
+                }
+        }
+        .frame(width: 520, height: 380)
+    }
+}
+
+// MARK: - General
+
+private struct GeneralTab: View {
+    @Binding var isEnabledBinding: Bool
+    let onQuit: () -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Show the island", isOn: $isEnabledBinding)
+                Text("When off, the island disappears entirely and every publisher stops listening.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
-            Divider()
-            Toggle("Show the island", isOn: $isEnabledBinding)
-                .font(.system(size: 12, weight: .semibold))
-
-            Divider()
-            Text("FEATURES")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(.secondary)
-            Toggle("Volume HUD", isOn: $volumeBinding)
-                .font(.system(size: 12))
-                .disabled(!isEnabledBinding)
-            Toggle("Brightness HUD", isOn: $brightnessBinding)
-                .font(.system(size: 12))
-                .disabled(!isEnabledBinding)
-            Toggle("Now Playing", isOn: $nowPlayingBinding)
-                .font(.system(size: 12))
-                .disabled(!isEnabledBinding)
-            Toggle("AirPods battery", isOn: $airpodsBinding)
-                .font(.system(size: 12))
-                .disabled(!isEnabledBinding)
-
-            Divider()
-            HStack {
-                Spacer()
-                Button("Quit Halo", action: onQuit)
-                    .controlSize(.small)
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Quit Halo", action: onQuit)
+                }
             }
         }
-        .padding(14)
-        .frame(width: 260)
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+// MARK: - Features (Halo's built-ins)
+
+private struct FeaturesTab: View {
+    @Binding var volumeBinding: Bool
+    @Binding var brightnessBinding: Bool
+    @Binding var nowPlayingBinding: Bool
+    @Binding var airpodsBinding: Bool
+    let isMasterOn: Bool
+
+    var body: some View {
+        Form {
+            Section("System HUDs") {
+                FeatureRow(
+                    title: "Volume HUD",
+                    subtitle: "Show level on every volume change",
+                    symbol: "speaker.wave.2.fill",
+                    isOn: $volumeBinding)
+                FeatureRow(
+                    title: "Brightness HUD",
+                    subtitle: "Show level on every brightness change",
+                    symbol: "sun.max.fill",
+                    isOn: $brightnessBinding)
+            }
+            Section("Live") {
+                FeatureRow(
+                    title: "Now Playing",
+                    subtitle: "Currently playing track from any app",
+                    symbol: "music.note",
+                    isOn: $nowPlayingBinding)
+                FeatureRow(
+                    title: "AirPods battery",
+                    subtitle: "Battery level of nearby Apple buds",
+                    symbol: "airpods",
+                    isOn: $airpodsBinding)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(!isMasterOn)
+        .padding()
+    }
+}
+
+// MARK: - Suite
+
+private struct SuiteTab: View {
+    let onSuiteToggle: () -> Void
+    let isMasterOn: Bool
+
+    var body: some View {
+        Form {
+            Section("MattsSoftware apps") {
+                ForEach(HaloSettings.suiteSlots) { slot in
+                    SuiteSlotRow(slot: slot, onToggle: onSuiteToggle)
+                }
+            }
+            Section {
+                Text("Apps publish their state to a shared file store at `~/Library/Application Support/MattsSoftware/live-activity/`. Any app — first-party or third-party — can write a payload there and it'll appear in the island.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(!isMasterOn)
+        .padding()
+    }
+}
+
+private struct SuiteSlotRow: View {
+    let slot: SuiteSlot
+    let onToggle: () -> Void
+
+    @State private var isOn: Bool
+
+    init(slot: SuiteSlot, onToggle: @escaping () -> Void) {
+        self.slot = slot
+        self.onToggle = onToggle
+        _isOn = State(initialValue: HaloSettings.suiteSlotEnabled(slot.id))
+    }
+
+    var body: some View {
+        Toggle(isOn: Binding(
+            get: { isOn },
+            set: { newValue in
+                isOn = newValue
+                HaloSettings.setSuiteSlotEnabled(slot.id, newValue)
+                onToggle()
+            }
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: slot.symbol)
+                    .frame(width: 22)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(slot.title)
+                    Text(slot.subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Feature row helper
+
+private struct FeatureRow: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .frame(width: 22)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - About
+
+private struct AboutTab: View {
+    private var version: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"]
+            as? String ?? "—"
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "rectangle.dashed.and.paperclip")
+                .font(.system(size: 56))
+                .foregroundStyle(.tint)
+                .padding(.top, 24)
+            VStack(spacing: 4) {
+                Text("Halo")
+                    .font(.system(size: 24, weight: .bold,
+                                  design: .rounded))
+                Text("Version \(version)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Text("The MattsSoftware Dynamic Island for the MacBook notch.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 30)
+            HStack(spacing: 12) {
+                Link("mattssoftware.com",
+                     destination: URL(string: "https://mattssoftware.com")!)
+                Text("·").foregroundStyle(.secondary)
+                Link("GitHub",
+                     destination: URL(string: "https://github.com/mattssoftware/halo-swift")!)
+            }
+            .font(.callout)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
     }
 }

@@ -77,6 +77,13 @@ final class LiveActivityCoordinator {
         pollTimer = nil
     }
 
+    /// Force an immediate re-poll. Used by settings toggles
+    /// that change which suite slots are visible — without it
+    /// the change waits up to 1s for the next scheduled tick.
+    func refreshNow() {
+        pollOnce()
+    }
+
     // MARK: - In-process injection
 
     /// Publish a payload owned by an in-process publisher (volume
@@ -143,12 +150,17 @@ final class LiveActivityCoordinator {
         let now = Date().timeIntervalSince1970
         var out: [Resolved] = []
         for url in entries where url.pathExtension == "json" {
+            let id = url.deletingPathExtension().lastPathComponent
+            // Honour the user's per-slot visibility toggle —
+            // a publisher whose file is on disk but whose
+            // settings flag is off is treated as if it
+            // weren't publishing at all.
+            if !HaloSettings.suiteSlotEnabled(id) { continue }
             guard let data = try? Data(contentsOf: url),
                   let p = try? JSONDecoder().decode(
                     SuiteLiveActivityStore.Payload.self, from: data)
             else { continue }
             if now - p.updatedAt > payloadTTL { continue }
-            let id = url.deletingPathExtension().lastPathComponent
             out.append(Resolved(
                 id: id,
                 compactLeadingImage: Self.symbolImage(p.compactLeadingSymbol),
