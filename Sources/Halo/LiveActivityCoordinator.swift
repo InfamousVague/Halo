@@ -148,6 +148,16 @@ final class LiveActivityCoordinator {
            let pinned = activities.first(where: { $0.id == lockedID }) {
             return pinned
         }
+        // Hover lock: while the cursor is over the island,
+        // freeze the slot on whatever was showing when hover
+        // began. Outranks focus events and ambient rotation
+        // so a publisher firing a focus window mid-hover
+        // can't yank the displayed activity out from under
+        // the user.
+        if let hoverID = hoverLockedID,
+           let pinned = activities.first(where: { $0.id == hoverID }) {
+            return pinned
+        }
         let focused = activities
             .compactMap { a -> (Resolved, Date)? in
                 guard let until = focusUntil[a.id], until > now
@@ -206,6 +216,14 @@ final class LiveActivityCoordinator {
     @ObservationIgnored private var userLockUntil: Date?
     @ObservationIgnored private let userLockDuration: TimeInterval = 15
 
+    /// While the cursor is over the island we freeze the slot
+    /// on whatever activity was showing the moment hover
+    /// began. The ambient rotation timer is torn down for the
+    /// duration and re-created fresh on un-hover, so the
+    /// next rotation tick is a full `ambientRotateInterval`
+    /// away rather than firing the instant the cursor leaves.
+    @ObservationIgnored private var hoverLockedID: String?
+
     /// In-process payloads — Halo's own publishers (volume,
     /// brightness, now-playing) write here directly instead of
     /// round-tripping through the file store. Updates are
@@ -224,12 +242,7 @@ final class LiveActivityCoordinator {
         ) { [weak self] _ in
             Task { @MainActor in self?.pollOnce() }
         }
-        ambientTimer = Timer.scheduledTimer(
-            withTimeInterval: ambientRotateInterval,
-            repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in self?.rotateAmbient() }
-        }
+        startAmbientTimer()
         // Publishers post this distributed notification right
         // after writing — gives us instant refresh instead of
         // waiting up to a second for the next polling tick.
@@ -253,6 +266,39 @@ final class LiveActivityCoordinator {
             DistributedNotificationCenter.default()
                 .removeObserver(o)
             refreshObserver = nil
+        }
+    }
+
+    /// Hover state from `HoverTracker`. When the cursor
+    /// enters the island, freeze the slot on whatever was
+    /// showing and stop the rotation timer entirely. On exit,
+    /// release the lock and re-arm the timer with a fresh
+    /// full interval — so the user doesn't get a rotation the
+    /// instant they move their cursor away.
+    func setHoverActive(_ active: Bool) {
+        if active {
+            hoverLockedID = topActivity?.id
+            ambientTimer?.invalidate()
+            ambientTimer = nil
+        } else {
+            hoverLockedID = nil
+            startAmbientTimer()
+            // Force SwiftUI to re-evaluate `topActivity` now
+            // that the hover lock is released — the displayed
+            // activity might want to advance to whatever the
+            // ambient cursor / focus state now resolves to.
+            let snapshot = activities
+            activities = snapshot
+        }
+    }
+
+    private func startAmbientTimer() {
+        ambientTimer?.invalidate()
+        ambientTimer = Timer.scheduledTimer(
+            withTimeInterval: ambientRotateInterval,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.rotateAmbient() }
         }
     }
 

@@ -311,6 +311,13 @@ struct NotchHostRoot: View {
             layout: layout,
             isExpanded: hover.isExpanded,
             onTap: { coordinator.advanceCycleManually() })
+            // Freeze the slot while the cursor is over the
+            // island. The coordinator tears down the ambient
+            // rotation timer for the duration and re-arms it
+            // with a fresh full interval on un-hover.
+            .onChange(of: hover.isHovered) { _, hovering in
+                coordinator.setHoverActive(hovering)
+            }
     }
 }
 
