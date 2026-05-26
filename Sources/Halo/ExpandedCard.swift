@@ -21,6 +21,8 @@ struct ExpandedCard: View {
                 StatsExpandedView()
             case "espresso":
                 EspressoExpandedView(activity: activity)
+            case "halo.nowplaying":
+                NowPlayingExpandedView(activity: activity)
             default:
                 genericContent
             }
@@ -75,6 +77,161 @@ struct ExpandedCard: View {
         case "nowplaying":  return "NOW PLAYING"
         default:            return trimmed.uppercased()
         }
+    }
+}
+
+// MARK: - Now Playing
+
+/// Rich playback view: album cover thumbnail on the left,
+/// title + artist + scrubber in the middle, prev/play-pause/
+/// next on the right. Position refreshes on its own 1s timer
+/// while visible so the scrubber moves smoothly even without
+/// a fresh publish.
+private struct NowPlayingExpandedView: View {
+    let activity: LiveActivityCoordinator.Resolved
+
+    @State private var livePosition: Double = 0
+    @State private var positionTimer: Timer?
+
+    private var media: LiveActivityCoordinator.MediaInfo? {
+        activity.media
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            artwork
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 6,
+                                            style: .continuous))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(media?.title ?? "—")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(media?.artist ?? "")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+                scrubber
+            }
+            controls
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { startTicking() }
+        .onDisappear { positionTimer?.invalidate() }
+        .onChange(of: media?.title) { _, _ in
+            livePosition = media?.positionSeconds ?? 0
+        }
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        if let img = media?.artwork {
+            Image(nsImage: img)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+                Image(systemName: "music.note")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+    }
+
+    private var scrubber: some View {
+        let duration = media?.durationSeconds ?? 0
+        let progress: Double = {
+            guard duration > 0 else { return 0 }
+            return min(1, max(0, livePosition / duration))
+        }()
+        return GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.white.opacity(0.14))
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: max(2, proxy.size.width
+                                      * CGFloat(progress)))
+            }
+        }
+        .frame(height: 3)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 10) {
+            ControlButton(symbol: "backward.fill") {
+                postControl(.previous)
+            }
+            ControlButton(
+                symbol: (media?.isPlaying ?? false)
+                    ? "pause.fill" : "play.fill",
+                large: true
+            ) {
+                postControl(.playPause)
+            }
+            ControlButton(symbol: "forward.fill") {
+                postControl(.next)
+            }
+        }
+    }
+
+    // MARK: - Behaviour
+
+    private enum Control { case playPause, next, previous }
+
+    private func postControl(_ c: Control) {
+        guard let source = media?.source else { return }
+        switch (source, c) {
+        case ("Spotify", .playPause): SpotifyScripter.playPause()
+        case ("Spotify", .next):      SpotifyScripter.next()
+        case ("Spotify", .previous):  SpotifyScripter.previous()
+        case ("Music",   .playPause): MusicScripter.playPause()
+        case ("Music",   .next):      MusicScripter.next()
+        case ("Music",   .previous):  MusicScripter.previous()
+        default:
+            // MediaRemote control commands need yet another
+            // private symbol set — wire on demand.
+            break
+        }
+    }
+
+    /// 1s tick that advances the scrubber locally so it looks
+    /// alive between publishes. Re-sync with the publisher's
+    /// reading every time the parent activity refreshes.
+    private func startTicking() {
+        livePosition = media?.positionSeconds ?? 0
+        positionTimer = Timer.scheduledTimer(
+            withTimeInterval: 1, repeats: true
+        ) { _ in
+            Task { @MainActor in
+                guard media?.isPlaying ?? false else { return }
+                livePosition += 1
+            }
+        }
+    }
+}
+
+private struct ControlButton: View {
+    let symbol: String
+    var large: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: large ? 16 : 12,
+                              weight: .semibold))
+                .frame(width: large ? 28 : 22,
+                       height: large ? 28 : 22)
+                .foregroundStyle(.white)
+                .background(
+                    Circle().fill(Color.white.opacity(
+                        large ? 0.16 : 0.08)))
+        }
+        .buttonStyle(.plain)
     }
 }
 

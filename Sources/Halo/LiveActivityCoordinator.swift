@@ -31,12 +31,63 @@ final class LiveActivityCoordinator {
         let compactTrailingImage: NSImage?
         let tint: Color
         let priority: Int
+        /// Optional rich-media payload — present only for
+        /// Now Playing. Drives the expanded card's artwork +
+        /// scrubber + controls.
+        let media: MediaInfo?
+
+        init(
+            id: String,
+            compactLeadingImage: NSImage?,
+            compactTrailingText: String?,
+            compactTrailingImage: NSImage?,
+            tint: Color,
+            priority: Int,
+            media: MediaInfo? = nil
+        ) {
+            self.id = id
+            self.compactLeadingImage = compactLeadingImage
+            self.compactTrailingText = compactTrailingText
+            self.compactTrailingImage = compactTrailingImage
+            self.tint = tint
+            self.priority = priority
+            self.media = media
+        }
 
         static func == (l: Resolved, r: Resolved) -> Bool {
             l.id == r.id &&
             l.compactTrailingText == r.compactTrailingText &&
             l.priority == r.priority &&
-            l.tint == r.tint
+            l.tint == r.tint &&
+            l.media?.title == r.media?.title &&
+            l.media?.isPlaying == r.media?.isPlaying
+        }
+    }
+
+    /// Rich Now Playing payload. Position / duration are in
+    /// seconds; artwork is the raw track image (album cover).
+    /// `source` describes who's playing (Spotify / Music /
+    /// MediaRemote) so the expanded view can route control
+    /// commands back through the right AppleScript app.
+    struct MediaInfo: Equatable {
+        let title: String
+        let artist: String?
+        let album: String?
+        let artwork: NSImage?
+        let positionSeconds: Double?
+        let durationSeconds: Double?
+        let isPlaying: Bool
+        let source: String
+
+        static func == (l: MediaInfo, r: MediaInfo) -> Bool {
+            // Skip artwork pixel comparison (slow + NSImage
+            // doesn't conform to Equatable). Title + source +
+            // isPlaying covers track changes; positions are
+            // refreshed via the expanded view's own timer.
+            l.title == r.title &&
+            l.artist == r.artist &&
+            l.source == r.source &&
+            l.isPlaying == r.isPlaying
         }
     }
 

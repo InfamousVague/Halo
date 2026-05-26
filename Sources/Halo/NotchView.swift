@@ -245,6 +245,9 @@ enum Geometry {
         case "halo.stats":
             // 3 rows × 20pt + 2 gaps × 10pt = 80pt
             content = 80
+        case "halo.nowplaying":
+            // 44pt artwork ≥ title+artist+scrubber stack
+            content = 50
         default:
             // Generic row: 26pt icon + spacing ≈ 30pt
             content = 30

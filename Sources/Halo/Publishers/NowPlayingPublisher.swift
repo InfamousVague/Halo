@@ -32,37 +32,51 @@ final class NowPlayingPublisher: HaloPublisher {
         self.coordinator = coordinator
     }
 
+    /// Backup poll for the AppleScript fallback path — Spotify
+    /// doesn't fire MediaRemote notifications on macOS 14.4+
+    /// without a private entitlement we don't have. Polling at
+    /// 1.5s catches track changes within the rapid-update
+    /// window so they don't constantly grab focus.
+    private var pollTimer: Timer?
+
     func start() {
         NowPlayingDebugLog.append("\(Date()) start()\n")
-        guard MediaRemote.shared != nil else {
+        if MediaRemote.shared != nil {
+            NowPlayingDebugLog.append(
+                "\(Date()) MediaRemote loaded\n")
+            // Subscribe BEFORE calling Register so the first
+            // notif arrives at us.
+            for name in [
+                "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+                "kMRMediaRemoteNowPlayingApplicationDidChangeNotification",
+                "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
+            ] {
+                let obs = NotificationCenter.default.addObserver(
+                    forName: NSNotification.Name(name),
+                    object: nil, queue: .main
+                ) { [weak self] note in
+                    NowPlayingDebugLog.append(
+                        "\(Date()) notif: \(note.name.rawValue)\n")
+                    Task { @MainActor in self?.publishCurrent() }
+                }
+                observers.append(obs)
+            }
+            MediaRemote.shared?.registerForNotifications(queue: .main)
+            registered = true
+        } else {
             NowPlayingDebugLog.append(
                 "\(Date()) MediaRemote.framework UNAVAILABLE\n")
-            return
         }
-        NowPlayingDebugLog.append(
-            "\(Date()) MediaRemote loaded\n")
-        // Subscribe to MediaRemote's change notifications BEFORE
-        // calling Register* — otherwise the first event may fire
-        // before our observers attach.
-        for name in [
-            "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
-            "kMRMediaRemoteNowPlayingApplicationDidChangeNotification",
-            "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
-        ] {
-            let obs = NotificationCenter.default.addObserver(
-                forName: NSNotification.Name(name),
-                object: nil, queue: .main
-            ) { [weak self] note in
-                NowPlayingDebugLog.append(
-                    "\(Date()) notif: \(note.name.rawValue)\n")
-                Task { @MainActor in self?.publishCurrent() }
-            }
-            observers.append(obs)
+        // Always start the AppleScript poller — Spotify on
+        // macOS 14.4+ is invisible to MediaRemote without
+        // private entitlements, so we ALSO ask Spotify
+        // directly via its scripting dictionary. Cheap (a
+        // single AppleScript dispatch every 1.5s).
+        pollTimer = Timer.scheduledTimer(
+            withTimeInterval: 1.5, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.publishCurrent() }
         }
-        MediaRemote.shared?.registerForNotifications(queue: .main)
-        registered = true
-        // Initial query — at launch, something may already be
-        // playing.
         publishCurrent()
     }
 
@@ -71,41 +85,91 @@ final class NowPlayingPublisher: HaloPublisher {
             NotificationCenter.default.removeObserver(o)
         }
         observers.removeAll()
+        pollTimer?.invalidate()
+        pollTimer = nil
         coordinator?.clear(id: id)
     }
 
     // MARK: - Publish
 
+    /// Try sources in order:
+    ///   1. MediaRemote — when it works, this is the cheapest
+    ///      + broadest source (catches Apple Music, podcasts,
+    ///      browsers etc. on macOS where the entitlement gate
+    ///      hasn't bitten us).
+    ///   2. Spotify via AppleScript — only path that works on
+    ///      macOS 14.4+ for Spotify specifically.
+    ///   3. Music.app via AppleScript — for users on macOS
+    ///      versions where MediaRemote silently returned empty
+    ///      for Apple Music too.
+    /// First source with a non-empty playing track wins.
     private func publishCurrent() {
-        guard let mr = MediaRemote.shared else { return }
-        mr.getNowPlayingInfo(queue: .main) { [weak self] info in
-            Task { @MainActor in self?.apply(info: info) }
+        // Try AppleScript Spotify first — when it's playing
+        // it's almost always the user's primary source.
+        if let info = SpotifyScripter.readNowPlaying() {
+            NowPlayingDebugLog.append(
+                "\(Date()) Spotify: \(info.title) — \(info.artist ?? "?") play=\(info.isPlaying)\n")
+            inject(info)
+            return
+        }
+        // Music.app fallback.
+        if let info = MusicScripter.readNowPlaying() {
+            NowPlayingDebugLog.append(
+                "\(Date()) Music: \(info.title) — \(info.artist ?? "?") play=\(info.isPlaying)\n")
+            inject(info)
+            return
+        }
+        // MediaRemote async query — last resort, often empty
+        // post-14.4 without the private entitlement.
+        guard let mr = MediaRemote.shared else {
+            coordinator?.clear(id: id)
+            return
+        }
+        mr.getNowPlayingInfo(queue: .main) { [weak self] dict in
+            Task { @MainActor in self?.applyMediaRemote(dict) }
         }
     }
 
-    private func apply(info: [String: Any]) {
+    private func applyMediaRemote(_ info: [String: Any]) {
         let keys = info.keys.sorted().joined(separator: ",")
-        let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
-        let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
-        // PlaybackRate is sometimes Float, sometimes Double in
-        // the NSNumber bridge — coerce via NSNumber so neither
-        // type misses.
+        let title = info["kMRMediaRemoteNowPlayingInfoTitle"]
+            as? String
+        let artist = info["kMRMediaRemoteNowPlayingInfoArtist"]
+            as? String
+        let album = info["kMRMediaRemoteNowPlayingInfoAlbum"]
+            as? String
         let playbackRate = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"]
             as? NSNumber)?.doubleValue ?? 0
+        let elapsed = (info["kMRMediaRemoteNowPlayingInfoElapsedTime"]
+            as? NSNumber)?.doubleValue
+        let duration = (info["kMRMediaRemoteNowPlayingInfoDuration"]
+            as? NSNumber)?.doubleValue
+        var artwork: NSImage?
+        if let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"]
+            as? Data {
+            artwork = NSImage(data: data)
+        }
         NowPlayingDebugLog.append(
-            "\(Date()) apply: title=\(title ?? "nil") artist=\(artist ?? "nil") rate=\(playbackRate) keys=\(keys)\n")
-
+            "\(Date()) apply(MR): title=\(title ?? "nil") rate=\(playbackRate) keys=\(keys)\n")
         guard let title, !title.isEmpty, playbackRate > 0 else {
             coordinator?.clear(id: id)
             return
         }
+        inject(LiveActivityCoordinator.MediaInfo(
+            title: title,
+            artist: artist,
+            album: album,
+            artwork: artwork,
+            positionSeconds: elapsed,
+            durationSeconds: duration,
+            isPlaying: playbackRate > 0,
+            source: "MediaRemote"))
+    }
 
-        // Trailing label: title only — artist would require a
-        // separate region the compact slot doesn't have yet.
-        // (Phase 2: artist on the expanded view.)
-        let truncated = truncate(title, max: 24)
-        _ = artist  // reserved for the expanded card
-
+    private func inject(
+        _ media: LiveActivityCoordinator.MediaInfo
+    ) {
+        let truncated = Self.truncate(media.title, max: 24)
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
@@ -113,11 +177,12 @@ final class NowPlayingPublisher: HaloPublisher {
             compactTrailingText: truncated,
             compactTrailingImage: nil,
             tint: .white,
-            priority: 60)
+            priority: 60,
+            media: media)
         coordinator?.inject(payload)
     }
 
-    private func truncate(_ s: String, max: Int) -> String {
+    private static func truncate(_ s: String, max: Int) -> String {
         if s.count <= max { return s }
         return s.prefix(max - 1) + "…"
     }
