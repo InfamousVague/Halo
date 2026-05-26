@@ -92,16 +92,20 @@ struct NotchView: View {
     private var screenTopAccent: some View {
         if let a = activity {
             let color = Self.accentColor(for: a)
-            // Width animates 0 → full screen width as
-            // borderProgress goes 0 → 1. Position the rect
-            // so it's centred on the notch and grows outward
-            // in both directions evenly.
+            // Line emanates from the bottom-centre of the
+            // island and extends horizontally — not the top
+            // edge of the screen. Width animates 0 → full
+            // screen width; Y tracks the pill's bottom so
+            // the stroke sits just beneath the menu-bar band.
+            let frame = Geometry.islandFrame(
+                for: a, layout: layout, expanded: isExpanded)
             Rectangle()
                 .fill(color)
                 .frame(
                     width: layout.screenWidth * borderProgress,
                     height: 2)
-                .position(x: layout.notchCenterX, y: 1)
+                .position(x: layout.notchCenterX,
+                          y: frame.maxY - 1)
                 .opacity(borderOpacity)
                 .allowsHitTesting(false)
         }
