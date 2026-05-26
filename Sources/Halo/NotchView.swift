@@ -162,12 +162,20 @@ struct NotchView: View {
             // Trailing slot is the data — full-opacity white,
             // sized to match the system menu-bar clock so the
             // pill looks native next to the rest of the bar.
+            //
+            // NO `.contentTransition(.opacity)` here: it
+            // crossfades on every text change, which makes the
+            // music position tick (1:23 → 1:24) and the
+            // Espresso countdown look like they're flickering.
+            // Activity-level crossfades still work via the
+            // `.id(a.id)` + `.transition(.opacity)` below —
+            // those only fire when the view tree REPLACES the
+            // Text, i.e. when the displayed activity changes.
             Text(text)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .fixedSize()
-                .contentTransition(.opacity)
                 .id("trail-text-\(a.id)")
                 .transition(.opacity)
         } else if let img = a.compactTrailingImage {
