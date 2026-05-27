@@ -417,14 +417,17 @@ struct NotchView: View {
                         style: .continuous))
                 if let title = a.media?.title,
                    !title.isEmpty {
-                    Text(title)
-                        .font(.system(size: 13,
-                                      weight: .medium))
-                        .foregroundStyle(
-                            Self.pillTextColor(for: a))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .fixedSize()
+                    // Cap at 120pt and ping-pong if the title
+                    // doesn't fit — long track names ("I Had
+                    // Some Help (Feat. Morgan Wallen)") used
+                    // to push the pill across the screen.
+                    MarqueeText(
+                        text: title,
+                        font: .system(size: 13,
+                                      weight: .medium),
+                        fontSize: 13,
+                        color: Self.pillTextColor(for: a),
+                        maxWidth: 120)
                 }
             }
             .id("lead-art-\(a.media?.title ?? "")")
@@ -627,7 +630,10 @@ enum Geometry {
     ) -> CGFloat {
         guard let a else { return 0 }
         if let title = a.media?.title, !title.isEmpty {
-            let maxTitleWidth: CGFloat = 140
+            // Same cap MarqueeText uses; long titles ride the
+            // ticker inside this width rather than widening
+            // the pill.
+            let maxTitleWidth: CGFloat = 120
             let titleWidth = min(
                 measureText(title, size: 13),
                 maxTitleWidth)
@@ -734,13 +740,91 @@ enum Geometry {
     /// Measure a string's drawn width using NSString's
     /// typesetting. Matches `Text(.system(size: 13))` — same
     /// regular-weight system font the menu-bar clock uses.
-    private static func measureText(
+    static func measureText(
         _ s: String, size: CGFloat
     ) -> CGFloat {
         let font = NSFont.systemFont(ofSize: size)
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
         return ceil((s as NSString).size(
             withAttributes: attrs).width) + 2
+    }
+}
+
+// MARK: - Marquee text
+
+/// Single-line text that ping-pongs horizontally if its drawn
+/// width exceeds `maxWidth` — radio-style ticker. Pauses
+/// briefly at each end before reversing so the user can
+/// actually read the full label. Falls back to a static frame
+/// at the text's natural width if it already fits.
+private struct MarqueeText: View {
+    let text: String
+    let font: Font
+    let fontSize: CGFloat
+    let color: Color
+    let maxWidth: CGFloat
+    /// Marquee scroll speed in points per second.
+    let speed: Double = 30
+    /// Pause at each end of the scroll, in seconds.
+    let endPause: Double = 1.5
+
+    var body: some View {
+        let measured = Geometry.measureText(text, size: fontSize)
+        let overflow = max(0, measured - maxWidth)
+        let containerWidth = overflow > 0 ? maxWidth : measured
+        Group {
+            if overflow > 0 {
+                TimelineView(.animation) { context in
+                    label
+                        .offset(x: -offset(
+                            at: context.date,
+                            overflow: overflow))
+                        .frame(width: containerWidth,
+                               alignment: .leading)
+                        .clipped()
+                }
+            } else {
+                label
+                    .frame(width: containerWidth,
+                           alignment: .leading)
+            }
+        }
+        // Restart the marquee when the text content changes
+        // (skip to next track) so we don't carry over a
+        // half-scrolled offset.
+        .id(text)
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    /// Where in the ping-pong cycle we are right now, expressed
+    /// as a horizontal offset to apply to the text. Cycle:
+    /// pause at start → scroll left → pause at end → scroll
+    /// back to start → repeat.
+    private func offset(
+        at date: Date, overflow: CGFloat
+    ) -> CGFloat {
+        let scrollDur = Double(overflow) / speed
+        let cycle = (endPause + scrollDur) * 2
+        let t = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: cycle)
+        if t < endPause {
+            return 0
+        } else if t < endPause + scrollDur {
+            let p = (t - endPause) / scrollDur
+            return CGFloat(p) * overflow
+        } else if t < endPause * 2 + scrollDur {
+            return overflow
+        } else {
+            let p = (t - endPause * 2 - scrollDur) / scrollDur
+            return overflow * CGFloat(1 - p)
+        }
     }
 }
 
