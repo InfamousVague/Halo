@@ -401,19 +401,34 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         if let artwork = a.media?.artwork {
-            // Album cover takes precedence over the generic
-            // music-note symbol when we have it. Full colour
-            // (not template-tinted) and clipped to a small
-            // rounded square so it reads like a Spotify /
-            // Music thumbnail rather than a glyph.
-            Image(nsImage: artwork)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 3,
-                                            style: .continuous))
-                .id("lead-art-\(a.media?.title ?? "")")
-                .transition(.opacity)
+            // Album cover + song title side by side. The
+            // cover stays the same small rounded thumbnail
+            // (reads like a Spotify / Music card); the title
+            // sits in the publisher's brand colour so the
+            // pill reads as "this song from this app" at a
+            // glance.
+            HStack(spacing: 6) {
+                Image(nsImage: artwork)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: 3,
+                        style: .continuous))
+                if let title = a.media?.title,
+                   !title.isEmpty {
+                    Text(title)
+                        .font(.system(size: 13,
+                                      weight: .medium))
+                        .foregroundStyle(
+                            Self.pillTextColor(for: a))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .fixedSize()
+                }
+            }
+            .id("lead-art-\(a.media?.title ?? "")")
+            .transition(.opacity)
         } else if let img = a.compactLeadingImage {
             // Tinted-near-white scheme — each pill picks up a
             // hint of its publisher's brand colour (Espresso
@@ -601,11 +616,25 @@ enum Geometry {
     static let notchClearance: CGFloat = 12
 
     /// Predicted width of the leading content slot for an
-    /// activity. Mirrors `NotchView.leadingContent`'s sizes.
+    /// activity. Mirrors `NotchView.leadingContent`'s sizes:
+    /// just the 18pt artwork / icon thumbnail by default, but
+    /// for now-playing pills the song title sits next to the
+    /// album cover so the slot widens to include it (capped
+    /// at `maxTitleWidth` to keep an enormous track name from
+    /// pushing the pill off the screen).
     static func leadingWidth(
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
-        a?.compactLeadingImage != nil ? 18 : 0
+        guard let a else { return 0 }
+        if let title = a.media?.title, !title.isEmpty {
+            let maxTitleWidth: CGFloat = 140
+            let titleWidth = min(
+                measureText(title, size: 13),
+                maxTitleWidth)
+            // artwork (18) + HStack spacing (6) + title
+            return 18 + 6 + titleWidth
+        }
+        return a.compactLeadingImage != nil ? 18 : 0
     }
 
     /// Predicted width of the trailing content slot. Text is
