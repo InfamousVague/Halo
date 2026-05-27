@@ -366,16 +366,50 @@ struct NotchView: View {
         }
     }
 
-    /// Colour used for the leading icon, the trailing text,
-    /// and the time read-out in the expanded music card. Just
-    /// the publisher's brand colour straight up — Spotify green
-    /// is *the* Spotify green, Apple Music red is *the* Apple
-    /// Music red, Espresso brown is the espresso brown.
+    /// Default brand-tint used for the leading icon, the
+    /// trailing text, and the time read-out in the expanded
+    /// music card. Most activities return the publisher's
+    /// brand colour straight up — see `pillIconColor` /
+    /// `pillTrailingTextColor` for the per-id overrides.
     static func pillTextColor(
         for a: LiveActivityCoordinator.Resolved
     ) -> Color {
         accentColor(for: a)
     }
+
+    /// Tint for the leading-pill icon and the expanded-card
+    /// header glyph. Same as the publisher's brand colour
+    /// for most apps; Worktree overrides to the Git brand
+    /// orange `#F1502F` so the official Jason Long logo
+    /// reads in its native colour instead of being painted
+    /// over with the worktree-green hex.
+    static func pillIconColor(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> Color {
+        if a.id == "worktree" { return gitBrandColor }
+        return pillTextColor(for: a)
+    }
+
+    /// Colour for the compact pill's trailing data text.
+    /// Same brand colour as the icon for most apps; Worktree's
+    /// branch name stays white because it's primary data
+    /// (the thing the user actually reads) and matching the
+    /// rest of the suite's "white primary text" convention
+    /// keeps the glance hierarchy consistent.
+    static func pillTrailingTextColor(
+        for a: LiveActivityCoordinator.Resolved
+    ) -> Color {
+        if a.id == "worktree" { return .white }
+        return pillTextColor(for: a)
+    }
+
+    /// The official Git logo colour
+    /// ([git-scm.com](https://git-scm.com)), used so the
+    /// Jason Long Git icon reads in its native palette
+    /// rather than tinted to match the worktree-green
+    /// hex.
+    private static let gitBrandColor = Color(
+        red: 0.945, green: 0.314, blue: 0.184)
 
     private static func brandColor(forID id: String) -> Color? {
         switch id {
@@ -451,7 +485,7 @@ struct NotchView: View {
             // animation explicitly; the icon itself doesn't
             // need to animate on text changes.
             Image(nsImage: tintImage(
-                img, color: Self.pillTextColor(for: a)))
+                img, color: Self.pillIconColor(for: a)))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
@@ -479,7 +513,7 @@ struct NotchView: View {
             // crossfade.
             Self.dimmedUnitsText(
                 text,
-                baseColor: Self.pillTextColor(for: a))
+                baseColor: Self.pillTrailingTextColor(for: a))
                 .font(.system(size: 13))
                 .lineLimit(1)
                 .fixedSize()
@@ -487,7 +521,7 @@ struct NotchView: View {
                 .id("trail-text-\(a.id)")
         } else if let img = a.compactTrailingImage {
             Image(nsImage: tintImage(
-                img, color: Self.pillTextColor(for: a)))
+                img, color: Self.pillIconColor(for: a)))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 16, height: 16)

@@ -167,8 +167,16 @@ private struct WorktreeExpandedView: View {
             // Header row — current state.
             HStack(spacing: 10) {
                 if let img = activity.compactLeadingImage {
+                    // Git logo renders in its native brand
+                    // orange (`pillIconColor` overrides for
+                    // worktree); the rest of the dropdown's
+                    // accents (dirty pill, chevrons) stay
+                    // worktree-green so the card still reads
+                    // as the Worktree app.
                     Image(nsImage: NotchView.tinted(
-                        img, color: brand))
+                        img,
+                        color: NotchView.pillIconColor(
+                            for: activity)))
                         .resizable()
                         .scaledToFit()
                         .frame(width: 18, height: 18)
