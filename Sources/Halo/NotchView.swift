@@ -558,16 +558,24 @@ struct NotchView: View {
                    (ch == ":" || ch == "/" || ch == "%") {
                     return 0.7
                 }
-                // Leading zero: `0` starting a digit-run AND
-                // padding a real value (the run contains at
-                // least one non-zero digit). Walk forward
-                // through the run looking for a non-zero
-                // digit; if the whole run is zeros it's the
-                // value itself, not padding.
+                // Leading zero: `0` at the start of a
+                // TOKEN (start of string, after whitespace,
+                // or after `/`) AND padding a real value
+                // (the token's first digit-run has at least
+                // one non-zero digit).
+                //
+                // The token boundary is what makes `03:00 /
+                // 03:29` dim both `0`s before the `3`s (each
+                // sits at the start of its own token), while
+                // the `0` before the `9` in `03:09` stays
+                // bright — it's mid-token, after the `:`
+                // separator, not at the start of a fresh
+                // value.
                 if ch == "0" {
-                    let prevIsDigit = i > 0
-                        && chars[i - 1].isNumber
-                    if !prevIsDigit {
+                    let prevIsTokenBoundary = i == 0
+                        || chars[i - 1].isWhitespace
+                        || chars[i - 1] == "/"
+                    if prevIsTokenBoundary {
                         var j = i + 1
                         var hasNonZeroDigit = false
                         while j < chars.count,
