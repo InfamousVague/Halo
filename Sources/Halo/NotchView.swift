@@ -687,6 +687,13 @@ enum Geometry {
     /// Minimum gap between content and the physical notch
     /// cutout so the icon/text never sit under the camera.
     static let notchClearance: CGFloat = 12
+    /// Standard width the island grows to when expanded so
+    /// every dropdown has the same comfortable footprint
+    /// regardless of which activity drives it. The pill only
+    /// grows past this when its natural width already exceeds
+    /// 440 (long music titles, etc); otherwise both wings
+    /// pad out symmetrically so the card centres on the notch.
+    static let expandedMinWidth: CGFloat = 440
 
     /// Predicted width of the leading content slot for an
     /// activity. Mirrors `NotchView.leadingContent`'s sizes:
@@ -768,14 +775,19 @@ enum Geometry {
                 + CGFloat(branchCount) * 26
         case "port":
             // Header row (eyebrow + count, ~30pt) + divider +
-            // up to 5 port rows × ~28pt (12pt label + 8pt
-            // vertical pad + 3pt row gap × N).
-            let rowCount = min(5,
+            // 2-column grid of port rows. With the standard
+            // `expandedMinWidth` (440pt) we fit two cards per
+            // row comfortably; up to 5 entries means at most
+            // ceil(5 / 2) = 3 grid rows. 30pt per row covers
+            // the 12pt label + the row's vertical padding plus
+            // a touch for the inter-row gap.
+            let entryCount = min(5,
                 a?.port?.entries.count ?? 0)
+            let gridRows = (entryCount + 1) / 2
             let headerHeight: CGFloat = 30
             let dividerPad: CGFloat = 12
-            let rowsHeight = rowCount > 0
-                ? CGFloat(rowCount) * 28 + dividerPad
+            let rowsHeight = gridRows > 0
+                ? CGFloat(gridRows) * 30 + dividerPad
                 : 0
             content = headerHeight + rowsHeight
         default:
@@ -810,16 +822,26 @@ enum Geometry {
         let rightHalf = max(
             trailW + contentInset + notchClearance,
             sidePad)
-        let totalWidth = leftHalf + notchW + rightHalf
+        var totalWidth = leftHalf + notchW + rightHalf
         var totalHeight = layout.menuBarHeight + 1
+        // When compact the pill hangs asymmetrically off the
+        // notch's leading edge so it tracks the menu bar's
+        // built-in clock. When expanded we instead grow to a
+        // standard `expandedMinWidth` and centre on the notch
+        // so every dropdown reads as the same UI element
+        // regardless of which publisher is driving it — the
+        // 2x2 Port grid, Worktree's branch list, Now Playing's
+        // controls all sit in the same comfortable footprint.
+        var leftEdge = layout.notchLeadingX - leftHalf
         if expanded {
             totalHeight += expandedExtraHeight(for: a)
+            if totalWidth < expandedMinWidth {
+                let notchCenter =
+                    layout.notchLeadingX + notchW / 2
+                totalWidth = expandedMinWidth
+                leftEdge = notchCenter - totalWidth / 2
+            }
         }
-        // Always asymmetric, anchored to the notch's leading
-        // edge. The expanded card lives entirely inside the
-        // same horizontal footprint as the compact row, so no
-        // sideways jump on hover.
-        let leftEdge = layout.notchLeadingX - leftHalf
         return CGRect(
             x: leftEdge, y: 0,
             width: totalWidth, height: totalHeight)

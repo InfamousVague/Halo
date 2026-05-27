@@ -139,102 +139,555 @@ struct ExpandedCard: View {
 /// user can switch to with a tap. Posts a distributed
 /// notification — Worktree's listener does the auto-stash +
 /// switch + pop on the other side.
+/// Full-fidelity Worktree control surface inside Halo's
+/// expanded card. Renders everything the standalone Worktree
+/// popover does — header with bookmark toggle, status pills,
+/// follow-focus banner when pinned, local + remote branches,
+/// worktrees, saved projects — and writes user actions back
+/// through the command channel (`WorktreeCommands`) so the
+/// user never has to open Worktree.app to manage state.
+///
+/// Phase 1 (read) + Phase 2 (quick actions) + Phase 3 (create
+/// sheets) all live here. New-worktree's directory picker
+/// still defers to Worktree.app (NSOpenPanel inside a transient
+/// hovering panel is brittle); everything else is fully in
+/// Halo's surface.
 private struct WorktreeExpandedView: View {
     let activity: LiveActivityCoordinator.Resolved
+
+    @State private var showNewBranchSheet = false
+    @State private var newBranchName = ""
+    @State private var showNewWorktreeSheet = false
+    @State private var newWorktreeBranch = ""
+    @State private var newWorktreeCreateNew = true
 
     private var info: LiveActivityCoordinator.WorktreeInfo? {
         activity.worktree
     }
 
-    /// Branches other than the current one, alphabetised,
-    /// capped so the card doesn't grow huge. Anything past the
-    /// cap is reachable via the Worktree popover.
-    private var otherBranches: [String] {
-        guard let info else { return [] }
-        return info.branches
-            .filter { $0 != info.currentBranch }
-            .sorted()
-            .prefix(5)
-            .map { $0 }
-    }
-
+    /// Brand colour Worktree publishes via the activity's tint.
+    /// Used for status pills, action accents, the bookmark fill.
     private var brand: Color {
         NotchView.pillTextColor(for: activity)
     }
 
+    /// Local branches that aren't the current one — Halo offers
+    /// them as switch targets. Sorted alphabetically for stable
+    /// rendering tick-to-tick.
+    private var switchableLocal: [String] {
+        guard let info else { return [] }
+        return info.branches
+            .filter { $0 != info.currentBranch }
+            .sorted()
+    }
+
+    /// Remote refs minus origin/HEAD (filtered by Worktree's
+    /// own remoteBranches resolver, but defence-in-depth).
+    private var remotes: [String] {
+        guard let info else { return [] }
+        return info.remoteBranches
+            .filter { !$0.hasSuffix("/HEAD") }
+            .sorted()
+    }
+
+    /// True if `repoPath` matches one of the saved projects —
+    /// drives the bookmark fill / outline state.
+    private var currentIsSaved: Bool {
+        guard let info else { return false }
+        return info.savedProjects
+            .contains(where: { $0.path == info.repoPath })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header row — current state.
-            HStack(spacing: 10) {
-                if let img = activity.compactLeadingImage {
-                    // Git logo renders in its native brand
-                    // orange (`pillIconColor` overrides for
-                    // worktree); the rest of the dropdown's
-                    // accents (dirty pill, chevrons) stay
-                    // worktree-green so the card still reads
-                    // as the Worktree app.
-                    Image(nsImage: NotchView.tinted(
-                        img,
-                        color: NotchView.pillIconColor(
-                            for: activity)))
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
-                }
-                Text(currentLabel)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                if (info?.isDirty ?? false) {
-                    Text("dirty")
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule().fill(brand.opacity(0.22)))
-                        .overlay(
-                            Capsule().stroke(
-                                brand.opacity(0.35),
-                                lineWidth: 0.5))
-                        .foregroundStyle(brand)
-                }
-                Spacer(minLength: 0)
-                if let branchCount = info?.branches.count,
-                   branchCount > 0 {
-                    Text("\(branchCount) "
-                         + (branchCount == 1
-                            ? "branch" : "branches"))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.haloTertiary)
+            if info?.isPinned == true { followFocusBanner }
+            headerRow
+            if let err = info?.lastError, !err.isEmpty {
+                errorBanner(err)
+            }
+            // Scrollable middle — branches + remotes + worktrees
+            // + saved. Capped at ~280pt so the card never grows
+            // past comfortable hover-height; overflow scrolls.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    branchesSection
+                    if !remotes.isEmpty { remotesSection }
+                    if let wts = info?.worktrees, !wts.isEmpty {
+                        worktreesSection(wts)
+                    }
+                    if let saved = info?.savedProjects,
+                       !saved.isEmpty {
+                        savedSection(saved)
+                    }
                 }
             }
-            if !otherBranches.isEmpty {
-                Divider()
-                    .background(Color.haloSurfaceFaint)
-                VStack(spacing: 4) {
-                    ForEach(otherBranches, id: \.self) { b in
+            .frame(maxHeight: 280)
+            footerActions
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $showNewBranchSheet) { newBranchSheet }
+        .sheet(isPresented: $showNewWorktreeSheet) { newWorktreeSheet }
+    }
+
+    // MARK: Header + banners
+
+    private var headerRow: some View {
+        HStack(spacing: 10) {
+            if let img = activity.compactLeadingImage {
+                Image(nsImage: NotchView.tinted(
+                    img,
+                    color: NotchView.pillIconColor(for: activity)))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(info?.currentBranch ?? "—")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.haloSecondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            statusPills
+            Button {
+                WorktreeCommands.toggleSaveCurrent()
+            } label: {
+                Image(systemName: currentIsSaved
+                      ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 12))
+                    .foregroundStyle(currentIsSaved
+                                     ? brand : .haloTertiary)
+            }
+            .buttonStyle(.plain)
+            .help(currentIsSaved
+                  ? "Remove from saved" : "Save this project")
+        }
+    }
+
+    private var displayName: String {
+        info?.displayName
+            ?? (info.map {
+                ($0.repoPath as NSString).lastPathComponent
+            } ?? "WORKTREE")
+    }
+
+    @ViewBuilder
+    private var statusPills: some View {
+        if let info {
+            HStack(spacing: 3) {
+                if info.ahead > 0 {
+                    statusPill("↑\(info.ahead)", color: .green)
+                }
+                if info.behind > 0 {
+                    statusPill("↓\(info.behind)", color: .orange)
+                }
+                if info.dirtyCount > 0 {
+                    statusPill("\(info.dirtyCount)*",
+                               color: .yellow)
+                }
+            }
+        }
+    }
+
+    private func statusPill(_ text: String,
+                            color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold,
+                          design: .monospaced))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(color.opacity(0.18))
+            .foregroundStyle(color)
+            .clipShape(Capsule())
+    }
+
+    private var followFocusBanner: some View {
+        Button {
+            WorktreeCommands.returnToFocus()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.uturn.left")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Following saved project")
+                    .font(.system(size: 10, weight: .medium))
+                Spacer()
+                Text("Follow focus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(brand)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity)
+            .background(brand.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 6,
+                                         style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func errorBanner(_ msg: String) -> some View {
+        Text(msg)
+            .font(.system(size: 10))
+            .foregroundStyle(.red)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.10))
+            .clipShape(RoundedRectangle(cornerRadius: 5,
+                                         style: .continuous))
+    }
+
+    // MARK: Branches + Remotes
+
+    private var branchesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            sectionHeader(
+                "BRANCHES",
+                trailingButton: (
+                    label: "Fetch",
+                    icon: "arrow.down.circle",
+                    action: { WorktreeCommands.fetch() }))
+            if switchableLocal.isEmpty {
+                Text("Only branch — \(info?.currentBranch ?? "")")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.haloTertiary)
+                    .padding(.horizontal, 8)
+            } else {
+                VStack(spacing: 3) {
+                    ForEach(switchableLocal, id: \.self) { b in
                         BranchRow(name: b, tint: brand) {
-                            switchTo(b)
+                            WorktreeCommands.switchBranch(b)
                         }
                     }
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var currentLabel: String {
-        guard let info else { return "WORKTREE" }
-        let repo = (info.repoPath as NSString).lastPathComponent
-        return "\(repo) · \(info.currentBranch)"
+    private var remotesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("REMOTES (\(remotes.count))")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(.haloTertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+            VStack(spacing: 3) {
+                ForEach(remotes, id: \.self) { r in
+                    remoteBranchRow(r)
+                }
+            }
+        }
     }
 
-    private func switchTo(_ branch: String) {
-        DistributedNotificationCenter.default()
-            .postNotificationName(
-                Notification.Name(
-                    "com.mattssoftware.worktree.switchBranch"),
-                object: branch,
-                deliverImmediately: true)
+    private func remoteBranchRow(_ name: String) -> some View {
+        Button {
+            WorktreeCommands.checkoutRemote(name)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cloud")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.haloTertiary)
+                Text(name)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.haloTertiary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.down.to.line.compact")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.haloTertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5,
+                                 style: .continuous)
+                    .fill(Color.haloSurfaceFaint))
+        }
+        .buttonStyle(.plain)
+        .help("Check out \(name) as a local tracking branch")
+    }
+
+    // MARK: Worktrees
+
+    private func worktreesSection(
+        _ worktrees: [LiveActivityCoordinator.WorktreeEntryInfo]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("WORKTREES (\(worktrees.count))")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(.haloTertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+            VStack(spacing: 3) {
+                ForEach(worktrees, id: \.path) { w in
+                    worktreeRow(w)
+                }
+            }
+        }
+    }
+
+    private func worktreeRow(
+        _ w: LiveActivityCoordinator.WorktreeEntryInfo
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: w.isCurrent
+                  ? "folder.fill" : "folder")
+                .font(.system(size: 10))
+                .foregroundStyle(w.isCurrent
+                                  ? brand : .haloTertiary)
+            VStack(alignment: .leading, spacing: 0) {
+                Text((w.path as NSString).lastPathComponent
+                     + (w.isMain ? " (main)" : ""))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.haloSecondary)
+                    .lineLimit(1)
+                if let b = w.branch {
+                    Text(b)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.haloTertiary)
+                }
+            }
+            Spacer(minLength: 0)
+            Button {
+                WorktreeCommands.openInFinder(w.path)
+            } label: {
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.haloTertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Reveal in Finder")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.haloSurfaceFaint))
+    }
+
+    // MARK: Saved projects
+
+    private func savedSection(
+        _ saved: [LiveActivityCoordinator.SavedProjectInfo]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("SAVED (\(saved.count))")
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(.haloTertiary)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+            VStack(spacing: 3) {
+                ForEach(saved, id: \.path) { p in
+                    savedRow(p)
+                }
+            }
+        }
+    }
+
+    private func savedRow(
+        _ p: LiveActivityCoordinator.SavedProjectInfo
+    ) -> some View {
+        let isCurrent = p.path == info?.repoPath
+        return Button {
+            WorktreeCommands.viewSaved(p.path)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isCurrent
+                      ? "bookmark.fill" : "bookmark")
+                    .font(.system(size: 10))
+                    .foregroundStyle(isCurrent
+                                      ? brand : .haloTertiary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(p.displayName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.haloSecondary)
+                        .lineLimit(1)
+                    if let b = p.lastKnownBranch {
+                        Text(b)
+                            .font(.system(size: 9,
+                                          design: .monospaced))
+                            .foregroundStyle(.haloTertiary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 5,
+                                 style: .continuous)
+                    .fill(Color.haloSurfaceFaint))
+        }
+        .buttonStyle(.plain)
+        .help(isCurrent
+              ? "Currently viewing \(p.displayName)"
+              : "Switch to \(p.displayName)")
+        .contextMenu {
+            Button("Remove from saved", role: .destructive) {
+                WorktreeCommands.removeSaved(p.path)
+            }
+        }
+    }
+
+    // MARK: Footer
+
+    private var footerActions: some View {
+        HStack(spacing: 6) {
+            actionButton("+ Branch", icon: "plus.circle") {
+                newBranchName = ""
+                showNewBranchSheet = true
+            }
+            actionButton("+ Worktree",
+                         icon: "square.split.bottomrightquarter") {
+                newWorktreeBranch = ""
+                newWorktreeCreateNew = true
+                showNewWorktreeSheet = true
+            }
+            Spacer(minLength: 0)
+            Button {
+                WorktreeCommands.pull()
+            } label: {
+                Image(systemName: "arrow.down.to.line")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.haloSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("git pull --ff-only")
+        }
+        .padding(.top, 2)
+    }
+
+    private func actionButton(_ label: String, icon: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 10))
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .foregroundStyle(.haloSecondary)
+            .background(
+                RoundedRectangle(cornerRadius: 5,
+                                 style: .continuous)
+                    .fill(Color.haloSurfaceFaint))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sectionHeader(
+        _ title: String,
+        trailingButton: (label: String, icon: String,
+                          action: () -> Void)?
+    ) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1)
+                .foregroundStyle(.haloTertiary)
+            Spacer()
+            if let t = trailingButton {
+                Button(action: t.action) {
+                    HStack(spacing: 3) {
+                        Image(systemName: t.icon)
+                            .font(.system(size: 9))
+                        Text(t.label)
+                            .font(.system(size: 9,
+                                          weight: .semibold))
+                            .tracking(0.5)
+                    }
+                    .foregroundStyle(brand)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    // MARK: Sheets
+
+    private var newBranchSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New branch")
+                .font(.system(size: 13, weight: .semibold))
+            TextField("name (e.g. feat/preset-picker)",
+                      text: $newBranchName)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { showNewBranchSheet = false }
+                Button("Create") {
+                    let n = newBranchName.trimmingCharacters(
+                        in: .whitespaces)
+                    if !n.isEmpty {
+                        WorktreeCommands.createBranch(n)
+                    }
+                    showNewBranchSheet = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(newBranchName.trimmingCharacters(
+                    in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    private var newWorktreeSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("New worktree")
+                .font(.system(size: 13, weight: .semibold))
+            Text("Adds a linked working directory checked out "
+                 + "to a branch — switch branches without "
+                 + "stashing. Worktree.app picks the destination "
+                 + "directory.")
+                .font(.system(size: 10))
+                .foregroundStyle(.haloSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Create new branch",
+                   isOn: $newWorktreeCreateNew)
+            TextField(
+                newWorktreeCreateNew
+                    ? "new branch name"
+                    : "existing branch name",
+                text: $newWorktreeBranch)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { showNewWorktreeSheet = false }
+                Button("Create") {
+                    let b = newWorktreeBranch.trimmingCharacters(
+                        in: .whitespaces)
+                    if !b.isEmpty,
+                       let repo = info?.repoPath {
+                        // Default location: sibling dir next to
+                        // the main worktree, named `<repo>-<branch>`.
+                        // Same suggestion the Worktree popover
+                        // uses when the user leaves path empty.
+                        let suggested = "\(repo)-\(b)"
+                        WorktreeCommands.addWorktree(
+                            branch: b,
+                            createNew: newWorktreeCreateNew,
+                            atPath: suggested)
+                    }
+                    showNewWorktreeSheet = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(newWorktreeBranch.trimmingCharacters(
+                    in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
     }
 }
 
@@ -276,7 +729,12 @@ private struct PortExpandedView: View {
                                       weight: .semibold))
                         .tracking(0.4)
                         .foregroundStyle(brand.opacity(0.85))
-                    Text("\(totalCount) open")
+                    // Verbatim so the count never picks up
+                    // the locale's thousands separator (1,234)
+                    // — the compact pill renders the same
+                    // value as a plain integer, and they
+                    // should match.
+                    Text(verbatim: "\(totalCount) open")
                         .font(.system(size: 12,
                                       weight: .semibold))
                         .foregroundStyle(.white)
@@ -292,7 +750,22 @@ private struct PortExpandedView: View {
             }
             if let entries = info?.entries, !entries.isEmpty {
                 Divider().background(Color.haloSurfaceFaint)
-                VStack(spacing: 3) {
+                // 2-column grid — at the expanded width the
+                // card is wide enough to fit two port cards
+                // side by side, which reads better than a
+                // single tall list. Caps at 5 entries (Port
+                // sorts by port number and prefixes to 5
+                // before publishing), so the grid is at most
+                // 3 rows tall.
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(),
+                                 spacing: 6),
+                        GridItem(.flexible(),
+                                 spacing: 6)
+                    ],
+                    spacing: 4
+                ) {
                     ForEach(entries, id: \.self) { e in
                         PortRow(entry: e, tint: brand) {
                             kill(pid: e.pid)
@@ -326,30 +799,35 @@ private struct PortRow: View {
     let kill: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text("\(entry.port)")
+        HStack(spacing: 6) {
+            // `Text(verbatim:)` so port numbers don't pick up
+            // the user's locale separator — Text's default
+            // `String(describing:)` interpolation would render
+            // 1900 as "1,900" in en_US.
+            Text(verbatim: String(entry.port))
                 .font(.system(size: 12,
                               weight: .semibold,
                               design: .monospaced))
                 .foregroundStyle(.white)
-                .frame(width: 46, alignment: .leading)
+                .fixedSize()
             Text(entry.proto.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .padding(.horizontal, 4)
+                .font(.system(size: 8, weight: .semibold))
+                .padding(.horizontal, 3)
                 .padding(.vertical, 1)
                 .background(
                     Capsule().fill(tint.opacity(0.18)))
                 .foregroundStyle(tint)
+                .fixedSize()
             Text(label)
-                .font(.system(size: 11))
+                .font(.system(size: 10))
                 .foregroundStyle(.haloSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
             Button(action: kill) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 18, height: 18)
+                    .font(.system(size: 8, weight: .bold))
+                    .frame(width: 16, height: 16)
                     .background(
                         Circle().fill(
                             Color.white.opacity(0.10)))
@@ -368,7 +846,7 @@ private struct PortRow: View {
 
     private var label: String {
         if let svc = entry.service, !svc.isEmpty {
-            return "\(svc) · \(entry.process)"
+            return svc
         }
         return entry.process
     }

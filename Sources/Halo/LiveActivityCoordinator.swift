@@ -75,17 +75,52 @@ final class LiveActivityCoordinator {
             l.media?.isPlaying == r.media?.isPlaying &&
             l.worktree?.currentBranch == r.worktree?.currentBranch &&
             l.worktree?.branches == r.worktree?.branches &&
+            l.worktree?.remoteBranches == r.worktree?.remoteBranches &&
             l.worktree?.isDirty == r.worktree?.isDirty &&
+            l.worktree?.ahead == r.worktree?.ahead &&
+            l.worktree?.behind == r.worktree?.behind &&
+            l.worktree?.dirtyCount == r.worktree?.dirtyCount &&
+            l.worktree?.isPinned == r.worktree?.isPinned &&
+            l.worktree?.lastError == r.worktree?.lastError &&
+            l.worktree?.worktrees == r.worktree?.worktrees &&
+            l.worktree?.savedProjects == r.worktree?.savedProjects &&
             l.port?.entries == r.port?.entries
         }
     }
 
-    /// Branch-switch payload Halo decodes from `worktree.json`.
+    /// Full Worktree state payload — Halo decodes everything
+    /// the standalone Worktree popover renders so the expanded
+    /// card can be a complete control surface (Phase 1-3 of the
+    /// feature-parity work). All collection-typed fields default
+    /// to empty so older Worktree releases that don't populate
+    /// the newer JSON keys still decode cleanly.
     struct WorktreeInfo: Equatable {
         let repoPath: String
+        let displayName: String?
         let currentBranch: String
         let branches: [String]
+        let remoteBranches: [String]
         let isDirty: Bool
+        let ahead: Int
+        let behind: Int
+        let dirtyCount: Int
+        let worktrees: [WorktreeEntryInfo]
+        let savedProjects: [SavedProjectInfo]
+        let isPinned: Bool
+        let lastError: String?
+    }
+
+    struct WorktreeEntryInfo: Equatable, Hashable {
+        let path: String
+        let branch: String?
+        let isCurrent: Bool
+        let isMain: Bool
+    }
+
+    struct SavedProjectInfo: Equatable, Hashable {
+        let path: String
+        let displayName: String
+        let lastKnownBranch: String?
     }
 
     /// Port-list payload Halo decodes from `port.json`. One
@@ -550,9 +585,29 @@ final class LiveActivityCoordinator {
             let worktreeInfo = p.worktree.map { w in
                 WorktreeInfo(
                     repoPath: w.repoPath,
+                    displayName: w.displayName,
                     currentBranch: w.currentBranch,
                     branches: w.branches,
-                    isDirty: w.isDirty)
+                    remoteBranches: w.remoteBranches,
+                    isDirty: w.isDirty,
+                    ahead: w.ahead,
+                    behind: w.behind,
+                    dirtyCount: w.dirtyCount,
+                    worktrees: w.worktrees.map {
+                        WorktreeEntryInfo(
+                            path: $0.path,
+                            branch: $0.branch,
+                            isCurrent: $0.isCurrent,
+                            isMain: $0.isMain)
+                    },
+                    savedProjects: w.savedProjects.map {
+                        SavedProjectInfo(
+                            path: $0.path,
+                            displayName: $0.displayName,
+                            lastKnownBranch: $0.lastKnownBranch)
+                    },
+                    isPinned: w.isPinned,
+                    lastError: w.lastError)
             }
             let portInfo = p.port.map { pd in
                 PortInfo(entries: pd.entries.map { e in
