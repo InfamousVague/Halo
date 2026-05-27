@@ -51,6 +51,16 @@ enum WorktreeCommands {
         send(.init(action: "fetch"))
     }
 
+    /// Auto-fetch path used when the expanded card opens.
+    /// Worktree throttles repeated calls (30s cooldown) so a
+    /// cursor wiggling over the island doesn't keep `git fetch`
+    /// running. Older Worktree builds without the
+    /// `fetchIfStale` handler fall through to the unknown-
+    /// action no-op, so this is forward-compatible only.
+    static func fetchIfStale() {
+        send(.init(action: "fetchIfStale"))
+    }
+
     static func pull() {
         send(.init(action: "pull"))
     }

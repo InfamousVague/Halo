@@ -777,13 +777,24 @@ enum Geometry {
             // anything extra is dead space below the card.
             content = 44
         case "worktree":
-            // Header row + divider + up to 5 branch rows ×
-            // ~26pt each. Real branch count caps the height
-            // dynamically by way of the empty VStack.
-            let branchCount = min(5, max(0,
+            // Repo header + recent-branches grid + footer
+            // actions. The branches grid is 3 columns × up to
+            // 2 rows (≤ 6 branches) — ceil((branches - current)
+            // / 3) gives the row count. Each grid cell is
+            // ~32pt tall (5pt vpad × 2 + 11pt text + a touch).
+            // Anything else the WorktreeExpandedView renders
+            // (REMOTES, WORKTREES, SAVED) lives inside its own
+            // ScrollView, which scrolls inside this frame
+            // rather than growing the card.
+            let switchable = min(6, max(0,
                 (a?.worktree?.branches.count ?? 1) - 1))
-            content = 24 /* header */ + 12 /* divider+pad */
-                + CGFloat(branchCount) * 26
+            let gridRows = max(1, (switchable + 2) / 3)
+            let gridBlock = CGFloat(gridRows) * 32 + 20
+                /* + 20pt for the section's RECENT BRANCHES
+                   eyebrow + the inter-row breathing space */
+            content = 36 /* header */
+                + 8 /* gap */ + gridBlock
+                + 8 /* gap */ + 28 /* footer */
         case "port":
             // Header row (eyebrow + count, ~30pt) + divider +
             // 2-column grid of port rows. With the standard

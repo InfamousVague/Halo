@@ -174,13 +174,17 @@ private struct WorktreeExpandedView: View {
     }
 
     /// Local branches that aren't the current one — Halo offers
-    /// them as switch targets. Sorted alphabetically for stable
-    /// rendering tick-to-tick.
+    /// them as switch targets. Worktree already sorts the
+    /// `branches` array by committer date (newest first) via
+    /// `git for-each-ref --sort=-committerdate`, so we just
+    /// keep that order and take the top 6 — exactly enough to
+    /// fill the expanded card's 3×2 quick-switch grid.
     private var switchableLocal: [String] {
         guard let info else { return [] }
         return info.branches
             .filter { $0 != info.currentBranch }
-            .sorted()
+            .prefix(6)
+            .map { $0 }
     }
 
     /// Remote refs minus origin/HEAD (filtered by Worktree's
@@ -229,6 +233,12 @@ private struct WorktreeExpandedView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .sheet(isPresented: $showNewBranchSheet) { newBranchSheet }
         .sheet(isPresented: $showNewWorktreeSheet) { newWorktreeSheet }
+        // Auto-refresh the remote-branch / ahead-behind state
+        // as soon as the card appears so the grid shows
+        // recently-pushed commits without the user having to
+        // click Fetch. Throttled on the Worktree side — see
+        // `fetchIfStale` (30s cooldown).
+        .onAppear { WorktreeCommands.fetchIfStale() }
     }
 
     // MARK: Header + banners
@@ -348,7 +358,7 @@ private struct WorktreeExpandedView: View {
     private var branchesSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             sectionHeader(
-                "BRANCHES",
+                "RECENT BRANCHES",
                 trailingButton: (
                     label: "Fetch",
                     icon: "arrow.down.circle",
@@ -359,9 +369,23 @@ private struct WorktreeExpandedView: View {
                     .foregroundStyle(.haloTertiary)
                     .padding(.horizontal, 8)
             } else {
-                VStack(spacing: 3) {
+                // 3-column grid showing the 6 most-recently-
+                // committed branches. Worktree feeds the array
+                // in newest-first order (`git for-each-ref
+                // --sort=-committerdate`), so the top-left cell
+                // is "the branch you most recently touched"
+                // and the read flows naturally left-to-right,
+                // top-to-bottom toward the older ones.
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 4),
+                        GridItem(.flexible(), spacing: 4),
+                        GridItem(.flexible(), spacing: 4)
+                    ],
+                    spacing: 4
+                ) {
                     ForEach(switchableLocal, id: \.self) { b in
-                        BranchRow(name: b, tint: brand) {
+                        BranchCell(name: b, tint: brand) {
                             WorktreeCommands.switchBranch(b)
                         }
                     }
@@ -851,6 +875,43 @@ private struct PortRow: View {
             return svc
         }
         return entry.process
+    }
+}
+
+/// Grid-cell branch chip used by the recent-branches 3-column
+/// grid. Compact (~125pt wide) — just the branch icon + name,
+/// no trailing arrow / chevron since the whole cell is the
+/// switch button. Truncates long names with a tail ellipsis
+/// and shows the full name on hover.
+private struct BranchCell: View {
+    let name: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 9))
+                    .foregroundStyle(tint.opacity(0.85))
+                Text(name)
+                    .font(.system(size: 11,
+                                  design: .monospaced))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 5,
+                                 style: .continuous)
+                    .fill(Color.haloSurfaceFaint))
+        }
+        .buttonStyle(.plain)
+        .help("Switch to \(name)")
     }
 }
 
