@@ -175,9 +175,22 @@ final class LiveActivityCoordinator {
         // so a publisher firing a focus window mid-hover
         // can't yank the displayed activity out from under
         // the user.
-        if let hoverID = hoverLockedID,
-           let pinned = activities.first(where: { $0.id == hoverID }) {
-            return pinned
+        //
+        // Prefer the LIVE activity (so in-place updates like
+        // port count or song position still flow through),
+        // but fall back to the cached snapshot if the
+        // publisher cleared its payload mid-hover. Keeps the
+        // pill steady so the user finishes whatever they
+        // started before the slot can re-shuffle.
+        if let hoverID = hoverLockedID {
+            if let live = activities.first(where: {
+                $0.id == hoverID
+            }) {
+                return live
+            }
+            if let snap = hoverLockedSnapshot {
+                return snap
+            }
         }
         let focused = activities
             .compactMap { a -> (Resolved, Date)? in
@@ -251,6 +264,15 @@ final class LiveActivityCoordinator {
     /// next rotation tick is a full `ambientRotateInterval`
     /// away rather than firing the instant the cursor leaves.
     @ObservationIgnored private var hoverLockedID: String?
+    /// Snapshot of the locked activity at the moment hover
+    /// started. Used as a fallback in `topActivity` if the
+    /// underlying publisher clears its payload mid-hover
+    /// (e.g. Port's 5s fade timer firing while the user is
+    /// reading the expanded card). Without it, the pill
+    /// would suddenly flip to whatever rotation lands on
+    /// next, which is exactly the "cycles off while I'm
+    /// interacting" behaviour we're trying to avoid.
+    @ObservationIgnored private var hoverLockedSnapshot: Resolved?
 
     /// In-process payloads — Halo's own publishers (volume,
     /// brightness, now-playing) write here directly instead of
@@ -305,11 +327,14 @@ final class LiveActivityCoordinator {
     /// instant they move their cursor away.
     func setHoverActive(_ active: Bool) {
         if active {
-            hoverLockedID = topActivity?.id
+            let pinned = topActivity
+            hoverLockedID = pinned?.id
+            hoverLockedSnapshot = pinned
             ambientTimer?.invalidate()
             ambientTimer = nil
         } else {
             hoverLockedID = nil
+            hoverLockedSnapshot = nil
             startAmbientTimer()
             // Force SwiftUI to re-evaluate `topActivity` now
             // that the hover lock is released — the displayed
@@ -373,6 +398,17 @@ final class LiveActivityCoordinator {
         ambientCursor = nextIdx
         userLockedID = next.id
         userLockUntil = Date().addingTimeInterval(userLockDuration)
+        // If the user is currently hovering, retarget the
+        // hover lock at their new selection too. Otherwise
+        // the lock would still point at whatever was showing
+        // when hover started, and as soon as the 15s user
+        // lock expired the pill would snap back to the
+        // pre-tap activity — which is exactly the "cycle off
+        // what I'm interacting with" behaviour we're avoiding.
+        if hoverLockedID != nil {
+            hoverLockedID = next.id
+            hoverLockedSnapshot = next
+        }
         cycleIndex &+= 1
         // Nudge @Observable to fire.
         let snapshot = activities

@@ -252,12 +252,19 @@ final class NotchHost: NSObject {
             y: screen.frame.maxY - cursor.y)
         // Use the current visible rect — expanded when the
         // card is open so the cursor doesn't fall out the
-        // moment the island grows past compact bounds.
+        // moment the island grows past compact bounds. A
+        // larger grace inset while expanded keeps brief
+        // cursor twitches (reaching for a kill button at the
+        // edge of the card, etc.) from dropping the hover
+        // and letting the rotation cycle off the activity
+        // the user is interacting with.
+        let inset: CGFloat =
+            hover.isExpanded ? -20 : -6
         let rect = Geometry.islandFrame(
             for: coordinator.topActivity,
             layout: layout,
             expanded: hover.isExpanded)
-            .insetBy(dx: -6, dy: -6)
+            .insetBy(dx: inset, dy: inset)
         let inside = rect.contains(panelLocal)
         hover.setHovered(inside)
         panel.ignoresMouseEvents = !inside
