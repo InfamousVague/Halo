@@ -72,12 +72,7 @@ final class BatteryPublisher: HaloPublisher {
             // interrupts ambient publishers. Charging/full
             // are informational.
             priority: info.percent <= 20 ? 75 : 35,
-            battery: battery,
-            // Inline bolt glyph BEFORE the percentage when
-            // charging — unmistakable charging indicator on
-            // top of the battery-icon's already-embedded bolt.
-            compactTrailingPrefixSymbol:
-                info.isCharging ? "bolt.fill" : nil)
+            battery: battery)
         coordinator?.inject(payload)
     }
 
@@ -117,7 +112,13 @@ final class BatteryPublisher: HaloPublisher {
     private func batterySymbol(
         percent: Int, charging: Bool
     ) -> String {
-        if charging { return "battery.100.bolt" }
+        // When charging the leading icon IS the charging
+        // indicator — a plain bolt, no battery outline. The
+        // user knows it's the battery pill from the context
+        // and the percentage on the trailing side. Avoids
+        // the doubled-bolt look (battery-icon's embedded
+        // bolt + a bolt indicator) the old design had.
+        if charging { return "bolt.fill" }
         switch percent {
         case 0..<10:   return "battery.0"
         case 10..<25:  return "battery.25"

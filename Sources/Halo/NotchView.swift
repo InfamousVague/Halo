@@ -495,6 +495,36 @@ struct NotchView: View {
             }
             .id("lead-art-\(a.media?.title ?? "")")
             .transition(.opacity)
+        } else if a.id == "worktree",
+                  let info = a.worktree,
+                  let img = a.compactLeadingImage {
+            // Worktree splits its label across both wings:
+            // Git icon + project name on the LEFT (data the
+            // user reads first — which repo am I in?), branch
+            // name on the RIGHT (data they act on — what
+            // branch?). Same layout pattern as Now Playing's
+            // artwork + title.
+            let projectName = info.displayName
+                ?? ((info.repoPath as NSString)
+                        .lastPathComponent)
+            HStack(spacing: 6) {
+                Image(nsImage: tintImage(
+                    img, color: Self.pillIconColor(for: a)))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+                    .opacity(0.9)
+                Text(projectName)
+                    .font(.system(size: 13,
+                                  weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 140,
+                           alignment: .leading)
+            }
+            .id("lead-worktree-\(projectName)")
+            .animation(nil, value: a.compactTrailingText)
         } else if let img = a.compactLeadingImage {
             // Tinted-near-white scheme — each pill picks up a
             // hint of its publisher's brand colour (Espresso
@@ -525,7 +555,22 @@ struct NotchView: View {
     private func trailingContent(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        if let text = a.compactTrailingText {
+        if a.id == "worktree", let info = a.worktree {
+            // Worktree puts the project name in the leading
+            // wing, so the trailing wing carries ONLY the
+            // current branch (plus a dirty marker if the
+            // working tree has uncommitted changes). White
+            // text — branch is the primary data the user
+            // reads on the right.
+            let marker = info.isDirty ? "*" : ""
+            Text("\(info.currentBranch)\(marker)")
+                .font(.system(size: 13))
+                .foregroundStyle(
+                    Self.pillTrailingTextColor(for: a))
+                .lineLimit(1)
+                .fixedSize()
+                .id("trail-worktree-\(info.currentBranch)")
+        } else if let text = a.compactTrailingText {
             // Letter unit suffixes (the 'h'/'m'/'s' after
             // digits in things like "1h30m" or "5m 23s") drop
             // to 50% — the number is the data, the unit is the
@@ -748,6 +793,17 @@ enum Geometry {
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
         guard let a else { return 0 }
+        if a.id == "worktree", let info = a.worktree {
+            // Git icon + project name (capped at 140pt so a
+            // huge folder name doesn't push the trailing
+            // branch off the screen). Mirror the renderer.
+            let projectName = info.displayName
+                ?? ((info.repoPath as NSString)
+                        .lastPathComponent)
+            let w = min(140,
+                        measureText(projectName, size: 13))
+            return 18 + 6 + w
+        }
         if a.media?.title != nil {
             // Pinned width regardless of the song's natural
             // text width. Used to be \`min(measured, cap)\`,
@@ -773,6 +829,14 @@ enum Geometry {
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
         guard let a else { return 0 }
+        if a.id == "worktree", let info = a.worktree {
+            // Just the current branch + optional dirty
+            // marker — no longer the full project·branch
+            // label the previous layout packed in here.
+            let marker = info.isDirty ? "*" : ""
+            return measureText(
+                "\(info.currentBranch)\(marker)", size: 13)
+        }
         if let text = a.compactTrailingText {
             var w = measureText(text, size: 13)
             // The inline glyph (bolt for the charging battery
