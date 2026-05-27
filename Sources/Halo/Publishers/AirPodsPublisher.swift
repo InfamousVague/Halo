@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import CoreBluetooth
 
 /// Reads battery levels from nearby AirPods / Beats by parsing
@@ -154,10 +155,20 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
     // MARK: - Publish
 
     fileprivate func apply(reading: AirPodsReading) {
+        lastReadingAt = Date()
+        // Only surface AirPods state in the island when the
+        // buds are actually being USED by this Mac — i.e.
+        // they're the default audio output device. Otherwise
+        // we'd flash a battery pill any time the user walked
+        // past their case with the lid open, which is noise.
+        guard isAirPodsActiveOutput() else {
+            lastPayload = nil
+            coordinator?.clear(id: id)
+            return
+        }
         // Same reading → don't churn the UI.
         if reading == lastPayload { return }
         lastPayload = reading
-        lastReadingAt = Date()
         guard let pct = reading.compactBattery else {
             coordinator?.clear(id: id)
             return
@@ -183,6 +194,50 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
             tint: .white,
             priority: 40)
         coordinator?.inject(payload)
+    }
+
+    /// `true` iff the system's default audio output device
+    /// looks like an AirPods / Beats device — used to gate
+    /// the pill so it only fires while the buds are actually
+    /// in use, not just nearby with the case lid open.
+    ///
+    /// Name-matching is the only reliable signal CoreAudio
+    /// exposes without diving into IORegistry. Apple's
+    /// Bluetooth output devices ship with names like
+    /// "AirPods", "AirPods Pro", "AirPods Pro 2", "Beats Studio
+    /// Buds", etc., so a case-insensitive substring on
+    /// `airpod` / `beats` covers the product line.
+    private func isAirPodsActiveOutput() -> Bool {
+        var deviceID = AudioDeviceID(0)
+        var idSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var idAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let idStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &idAddr, 0, nil,
+            &idSize, &deviceID)
+        guard idStatus == noErr,
+              deviceID != kAudioObjectUnknown
+        else { return false }
+
+        var nameRef: Unmanaged<CFString>? = nil
+        var nameSize = UInt32(
+            MemoryLayout<Unmanaged<CFString>?>.size)
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let nameStatus = AudioObjectGetPropertyData(
+            deviceID, &nameAddr, 0, nil,
+            &nameSize, &nameRef)
+        guard nameStatus == noErr,
+              let cf = nameRef?.takeRetainedValue()
+        else { return false }
+
+        let name = (cf as String).lowercased()
+        return name.contains("airpod") || name.contains("beats")
     }
 }
 
