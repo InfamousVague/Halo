@@ -441,6 +441,8 @@ struct NotchView: View {
         case "halo.brightness": return .white
         case "halo.nowplaying": return Color(red: 0.96, green: 0.41, blue: 0.62)
         case "halo.airpods":    return Color(red: 0.78, green: 0.78, blue: 0.82)
+        case "halo.bluetoothaudio":
+                                return Color(red: 0.36, green: 0.66, blue: 1.00)
         case "halo.stats":      return Color(red: 0.35, green: 0.83, blue: 0.85)
         case "halo.battery":    return Color(red: 0.30, green: 0.83, blue: 0.50)
         case "halo.vpn":        return Color(red: 0.30, green: 0.83, blue: 0.50)
@@ -825,6 +827,16 @@ enum Geometry {
             // battery cells (~44pt: 9pt label + 4pt gap +
             // 4pt bar + 5pt × 2 vertical pad + breathing).
             content = 26 + 12 + 44
+        case "halo.bluetoothaudio":
+            // Header row + divider + a small battery-bar /
+            // codec block. When battery is known: ~64pt for
+            // the bar row. When not known: just the
+            // connection eyebrow.
+            let hasBat = a?.bluetoothAudio?
+                .batteryPercent != nil
+            content = 36 /* header */
+                + 12 /* divider */
+                + (hasBat ? 36 : 20)
         case "halo.nowplaying":
             // Artwork is 44pt tall and dominates the row. The
             // title + artist + scrubber stack and the

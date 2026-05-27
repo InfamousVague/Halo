@@ -46,6 +46,14 @@ enum HaloSettings {
         UserDefaults.standard.set(on, forKey: "halo.publisher.airpods")
     }
 
+    static var bluetoothAudioEnabled: Bool {
+        defaultOn(forKey: "halo.publisher.bluetoothaudio")
+    }
+    static func setBluetoothAudioEnabled(_ on: Bool) {
+        UserDefaults.standard.set(
+            on, forKey: "halo.publisher.bluetoothaudio")
+    }
+
     static var statsEnabled: Bool {
         // Default off — Stats is ambient; the user can opt in
         // from Settings if they want a persistent CPU/RAM/Disk

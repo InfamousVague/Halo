@@ -88,6 +88,12 @@ final class NotchHost: NSObject {
             a.start()
             publishers.append(a)
         }
+        if HaloSettings.bluetoothAudioEnabled {
+            let b = BluetoothAudioPublisher(
+                coordinator: coordinator)
+            b.start()
+            publishers.append(b)
+        }
         if HaloSettings.statsEnabled {
             let s = StatsPublisher(coordinator: coordinator)
             s.start()

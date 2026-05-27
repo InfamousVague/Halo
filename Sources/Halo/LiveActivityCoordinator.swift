@@ -54,6 +54,11 @@ final class LiveActivityCoordinator {
         /// accessory that publishes BatteryPercent in
         /// IORegistry (Magic Mouse / Trackpad / Keyboard, …).
         let battery: BatteryInfo?
+        /// Optional Bluetooth-audio payload — non-AirPods/Beats
+        /// audio output devices the publisher surfaces while
+        /// they're the active output. AirPods/Beats keep their
+        /// own dedicated pill via `AirPodsPublisher`.
+        let bluetoothAudio: BluetoothAudioInfo?
         /// Optional SF Symbol rendered inline as a glyph BEFORE
         /// the trailing text. Lets the battery pill prepend a
         /// lightning bolt when charging without having to bake
@@ -73,6 +78,7 @@ final class LiveActivityCoordinator {
             port: PortInfo? = nil,
             airpods: AirPodsInfo? = nil,
             battery: BatteryInfo? = nil,
+            bluetoothAudio: BluetoothAudioInfo? = nil,
             compactTrailingPrefixSymbol: String? = nil
         ) {
             self.id = id
@@ -86,6 +92,7 @@ final class LiveActivityCoordinator {
             self.port = port
             self.airpods = airpods
             self.battery = battery
+            self.bluetoothAudio = bluetoothAudio
             self.compactTrailingPrefixSymbol =
                 compactTrailingPrefixSymbol
         }
@@ -111,9 +118,28 @@ final class LiveActivityCoordinator {
             l.port?.entries == r.port?.entries &&
             l.airpods == r.airpods &&
             l.battery == r.battery &&
+            l.bluetoothAudio == r.bluetoothAudio &&
             l.compactTrailingPrefixSymbol
                 == r.compactTrailingPrefixSymbol
         }
+    }
+
+    /// Bluetooth-audio device payload — captured from
+    /// CoreAudio (device name + transport) plus a best-effort
+    /// battery read via `system_profiler SPBluetoothDataType`
+    /// (cached, runs in the background).
+    struct BluetoothAudioInfo: Equatable {
+        let name: String
+        /// Battery percent (0…100) or nil if unknown / not
+        /// reported by the device. Generic Bluetooth speakers
+        /// usually report via AVRCP and `system_profiler`
+        /// exposes it; some headphones only report when paused.
+        let batteryPercent: Int?
+        /// Minor type / form factor inferred from the device
+        /// name + `system_profiler` minorType so the expanded
+        /// card picks the right SF Symbol — speaker /
+        /// headphones / soundbar / earbuds.
+        let symbol: String
     }
 
     /// Battery state payload — covers the internal Mac
