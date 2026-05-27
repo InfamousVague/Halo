@@ -501,18 +501,23 @@ struct NotchView: View {
     /// "labels" around digits while leaving the meaningful
     /// digits at full punch. Three categories of dim:
     ///
-    /// * **Unit letters** following a digit — `h`/`m`/`s`/`d`
-    ///   in things like `1h30m`, `5m 23s`, `1d4h`.
-    /// * **Numeric punctuation** in time / percent strings —
-    ///   `:`, `/`, `%` in things like `1:23`, `1:23 / 4:56`,
-    ///   `50%`. Only dimmed when the surrounding string is
-    ///   clearly numeric (digit immediately followed by `:`
-    ///   or `%` somewhere in the run), so a branch name like
-    ///   `feature/foo` doesn't get its `/` dimmed too.
-    /// * **Leading zeros** — the padding `0` at the start of
-    ///   each numeric group (`0`*1*:23, *0*5m 23s) so the
-    ///   eye reads the magnitude without losing the constant
-    ///   width that prevents pill reflow.
+    /// * **Unit letters** at 50% — `h`/`m`/`s`/`d` after a
+    ///   digit in `1h30m`, `5m 23s`, `1d4h`.
+    /// * **Leading zeros** at 50% — a `0` that starts a
+    ///   digit-run AND is padding a real (non-zero) value.
+    ///   So both `0`s in `03:00 / 03:29` dim (each is padding
+    ///   the leading `3`), the `0` in `01:23` dims, and the
+    ///   `0` after `:` in `01:05` also dims (it's padding the
+    ///   `5`). But the `00` in `10:00` or `00:48` stays
+    ///   bright — the whole digit-run is zero, no real value
+    ///   to pad, the `0`s *are* the value.
+    /// * **Numeric punctuation** at 70% — `:`, `/`, `%` when
+    ///   the string is clearly a numeric label (a digit
+    ///   immediately followed by `:` or `%` somewhere). At
+    ///   70% rather than 50% so the structural separators
+    ///   stay readable; the units / leading-zero placeholders
+    ///   are quieter (50%) since they're labels, not glyphs
+    ///   that need to be quickly parsed.
     static func dimmedUnitsText(
         _ s: String,
         baseColor: Color = .white
@@ -530,30 +535,13 @@ struct NotchView: View {
             }
             return false
         }()
-        // Index where the leading-zero prefix ends. Only `0`s
-        // at indices < this point dim. A `0` that appears
-        // later in the string — after a `:`, in the middle of
-        // a value, anywhere — is part of the value and stays
-        // bright. We also skip the dim treatment entirely if
-        // the leading run isn't padding anything (a lone "0"
-        // with no digits after it, like `0%`, *is* the value
-        // — not a placeholder).
-        let leadingZeroEnd: Int = {
-            var i = 0
-            while i < chars.count && chars[i] == "0" {
-                i += 1
-            }
-            let hasMoreDigits = chars.dropFirst(i)
-                .contains(where: { $0.isNumber })
-            return hasMoreDigits ? i : 0
-        }()
         for i in 0..<chars.count {
             let ch = chars[i]
-            let isUnit: Bool = {
+            let opacity: Double = {
                 // Single-letter unit after a digit (h/m/s/d).
                 if ch.isLetter {
                     guard i > 0, chars[i - 1].isNumber else {
-                        return false
+                        return 1.0
                     }
                     // The next char (if any) should NOT also
                     // be a letter — otherwise we'd be in the
@@ -561,34 +549,42 @@ struct NotchView: View {
                     // preceding "10").
                     if i + 1 < chars.count,
                        chars[i + 1].isLetter {
-                        return false
+                        return 1.0
                     }
-                    return true
+                    return 0.5
                 }
                 // Numeric punctuation in a numeric run.
                 if isNumericContext &&
                    (ch == ":" || ch == "/" || ch == "%") {
-                    return true
+                    return 0.7
                 }
-                // Leading zero: a `0` strictly inside the
-                // leading-zero prefix of the whole label.
-                // `01:23` → the `0` at index 0 dims, the `0`
-                // after the colon stays bright (it's in the
-                // middle of the displayed number, not at the
-                // start). `00:48` → both `0`s at the very
-                // start dim. `10:23` → no leading zeros at
-                // all. `0%` (no digits after the lone `0`) →
-                // bright, since it's the value not padding.
-                if ch == "0" && i < leadingZeroEnd {
-                    return true
+                // Leading zero: `0` starting a digit-run AND
+                // padding a real value (the run contains at
+                // least one non-zero digit). Walk forward
+                // through the run looking for a non-zero
+                // digit; if the whole run is zeros it's the
+                // value itself, not padding.
+                if ch == "0" {
+                    let prevIsDigit = i > 0
+                        && chars[i - 1].isNumber
+                    if !prevIsDigit {
+                        var j = i + 1
+                        var hasNonZeroDigit = false
+                        while j < chars.count,
+                              chars[j].isNumber {
+                            if chars[j] != "0" {
+                                hasNonZeroDigit = true
+                                break
+                            }
+                            j += 1
+                        }
+                        if hasNonZeroDigit { return 0.5 }
+                    }
                 }
-                return false
+                return 1.0
             }()
             let piece = Text(String(ch))
-                .foregroundStyle(
-                    isUnit
-                        ? baseColor.opacity(0.5)
-                        : baseColor)
+                .foregroundStyle(baseColor.opacity(opacity))
             result = result + piece
         }
         return result
