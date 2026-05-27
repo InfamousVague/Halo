@@ -670,11 +670,12 @@ enum Geometry {
             // 3 rows × 20pt + 2 gaps × 10pt = 80pt
             content = 80
         case "halo.nowplaying":
-            // Controls column is now controls (~24pt) + 4pt
-            // gap + time read-out (~14pt) = ~42pt, plus the
-            // artwork at 44pt. Bump the slot from 50 → 60 so
-            // the read-out doesn't get clipped.
-            content = 60
+            // Artwork is 44pt tall and dominates the row. The
+            // title + artist + scrubber stack and the
+            // controls + time-readout stack both fit inside
+            // that height, so 44 is exactly the row height —
+            // anything extra is dead space below the card.
+            content = 44
         case "worktree":
             // Header row + divider + up to 5 branch rows ×
             // ~26pt each. Real branch count caps the height
