@@ -718,6 +718,18 @@ enum Geometry {
                 (a?.worktree?.branches.count ?? 1) - 1))
             content = 24 /* header */ + 12 /* divider+pad */
                 + CGFloat(branchCount) * 26
+        case "port":
+            // Header row (eyebrow + count, ~30pt) + divider +
+            // up to 5 port rows × ~28pt (12pt label + 8pt
+            // vertical pad + 3pt row gap × N).
+            let rowCount = min(5,
+                a?.port?.entries.count ?? 0)
+            let headerHeight: CGFloat = 30
+            let dividerPad: CGFloat = 12
+            let rowsHeight = rowCount > 0
+                ? CGFloat(rowCount) * 28 + dividerPad
+                : 0
+            content = headerHeight + rowsHeight
         default:
             // Generic row: 26pt icon + spacing ≈ 30pt
             content = 30

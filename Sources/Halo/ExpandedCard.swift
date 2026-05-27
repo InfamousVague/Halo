@@ -71,6 +71,8 @@ struct ExpandedCard: View {
                 NowPlayingExpandedView(activity: activity)
             case "worktree":
                 WorktreeExpandedView(activity: activity)
+            case "port":
+                PortExpandedView(activity: activity)
             default:
                 genericContent
             }
@@ -225,6 +227,142 @@ private struct WorktreeExpandedView: View {
                     "com.mattssoftware.worktree.switchBranch"),
                 object: branch,
                 deliverImmediately: true)
+    }
+}
+
+// MARK: - Port
+
+/// Lists the top few listening ports Port surfaced in the
+/// live-activity payload, with a per-row kill button. Tap a
+/// row's kill icon → distributed notification → Port's
+/// `killByPid` runs `kill(2)` on the owning pid. Rows
+/// disappear from the next publish once the process is gone.
+private struct PortExpandedView: View {
+    let activity: LiveActivityCoordinator.Resolved
+
+    private var info: LiveActivityCoordinator.PortInfo? {
+        activity.port
+    }
+    private var brand: Color {
+        NotchView.pillTextColor(for: activity)
+    }
+    private var totalCount: Int {
+        Int(activity.compactTrailingText ?? "") ?? 0
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Header — total listening-port count + a small
+            // "showing N of M" hint when we capped the list.
+            HStack(spacing: 10) {
+                if let img = activity.compactLeadingImage {
+                    Image(nsImage: NotchView.tinted(
+                        img, color: brand))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("LISTENING PORTS")
+                        .font(.system(size: 10,
+                                      weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(brand.opacity(0.85))
+                    Text("\(totalCount) open")
+                        .font(.system(size: 12,
+                                      weight: .semibold))
+                        .foregroundStyle(.white)
+                        .contentTransition(.numericText())
+                }
+                Spacer(minLength: 0)
+                if let info, info.entries.count < totalCount {
+                    Text("top \(info.entries.count)")
+                        .font(.system(size: 10,
+                                      weight: .medium))
+                        .foregroundStyle(.haloTertiary)
+                }
+            }
+            if let entries = info?.entries, !entries.isEmpty {
+                Divider().background(Color.haloSurfaceFaint)
+                VStack(spacing: 3) {
+                    ForEach(entries, id: \.self) { e in
+                        PortRow(entry: e, tint: brand) {
+                            kill(pid: e.pid)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func kill(pid: Int32) {
+        DistributedNotificationCenter.default()
+            .postNotificationName(
+                Notification.Name(
+                    "com.mattssoftware.port.kill"),
+                object: String(pid),
+                deliverImmediately: true)
+    }
+}
+
+/// One row in the Port expanded card.
+///
+/// Layout, left to right:
+///   • Port number (data; large white)
+///   • Service / process name (label; secondary)
+///   • Kill button (brand-tinted destructive action)
+private struct PortRow: View {
+    let entry: LiveActivityCoordinator.PortEntry
+    let tint: Color
+    let kill: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("\(entry.port)")
+                .font(.system(size: 12,
+                              weight: .semibold,
+                              design: .monospaced))
+                .foregroundStyle(.white)
+                .frame(width: 46, alignment: .leading)
+            Text(entry.proto.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(
+                    Capsule().fill(tint.opacity(0.18)))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.haloSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            Button(action: kill) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle().fill(
+                            Color.white.opacity(0.10)))
+                    .foregroundStyle(.haloSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("Terminate pid \(entry.pid) (\(entry.process))")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 5,
+                             style: .continuous)
+                .fill(Color.haloSurfaceFaint))
+    }
+
+    private var label: String {
+        if let svc = entry.service, !svc.isEmpty {
+            return "\(svc) · \(entry.process)"
+        }
+        return entry.process
     }
 }
 

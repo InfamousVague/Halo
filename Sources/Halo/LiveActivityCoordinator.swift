@@ -39,6 +39,10 @@ final class LiveActivityCoordinator {
         /// for the `worktree` slot. Drives the branch-switcher
         /// dropdown in the expanded card.
         let worktree: WorktreeInfo?
+        /// Optional Port-specific payload — listening-port
+        /// rows + owning pids the expanded card renders with
+        /// per-row kill buttons.
+        let port: PortInfo?
 
         init(
             id: String,
@@ -48,7 +52,8 @@ final class LiveActivityCoordinator {
             tint: Color,
             priority: Int,
             media: MediaInfo? = nil,
-            worktree: WorktreeInfo? = nil
+            worktree: WorktreeInfo? = nil,
+            port: PortInfo? = nil
         ) {
             self.id = id
             self.compactLeadingImage = compactLeadingImage
@@ -58,6 +63,7 @@ final class LiveActivityCoordinator {
             self.priority = priority
             self.media = media
             self.worktree = worktree
+            self.port = port
         }
 
         static func == (l: Resolved, r: Resolved) -> Bool {
@@ -69,7 +75,8 @@ final class LiveActivityCoordinator {
             l.media?.isPlaying == r.media?.isPlaying &&
             l.worktree?.currentBranch == r.worktree?.currentBranch &&
             l.worktree?.branches == r.worktree?.branches &&
-            l.worktree?.isDirty == r.worktree?.isDirty
+            l.worktree?.isDirty == r.worktree?.isDirty &&
+            l.port?.entries == r.port?.entries
         }
     }
 
@@ -79,6 +86,20 @@ final class LiveActivityCoordinator {
         let currentBranch: String
         let branches: [String]
         let isDirty: Bool
+    }
+
+    /// Port-list payload Halo decodes from `port.json`. One
+    /// entry per row in the expanded card.
+    struct PortInfo: Equatable {
+        let entries: [PortEntry]
+    }
+
+    struct PortEntry: Equatable, Hashable {
+        let proto: String
+        let port: Int
+        let pid: Int32
+        let process: String
+        let service: String?
     }
 
     /// Rich Now Playing payload. Position / duration are in
@@ -497,6 +518,16 @@ final class LiveActivityCoordinator {
                     branches: w.branches,
                     isDirty: w.isDirty)
             }
+            let portInfo = p.port.map { pd in
+                PortInfo(entries: pd.entries.map { e in
+                    PortEntry(
+                        proto: e.proto,
+                        port: e.port,
+                        pid: e.pid,
+                        process: e.process,
+                        service: e.service)
+                })
+            }
             out.append(Resolved(
                 id: id,
                 compactLeadingImage: Self.symbolImage(p.compactLeadingSymbol),
@@ -504,7 +535,8 @@ final class LiveActivityCoordinator {
                 compactTrailingImage: Self.symbolImage(p.compactTrailingSymbol),
                 tint: Self.color(hex: p.tintHex),
                 priority: p.priority,
-                worktree: worktreeInfo
+                worktree: worktreeInfo,
+                port: portInfo
             ))
         }
         return out
