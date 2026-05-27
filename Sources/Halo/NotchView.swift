@@ -535,6 +535,38 @@ struct NotchView: View {
             }
             return false
         }()
+        // Precompute the indices of every leading-zero
+        // character. A `0` dims iff it sits in the
+        // "leading-zero run" of its token — i.e. start of
+        // string / whitespace / `/`, followed by zero or
+        // more consecutive `0`s, before the first non-`0`
+        // character. So `00:53` dims both prefix zeros (the
+        // whole minutes field is zero-padded), `01:23` dims
+        // only the first, `10:00` dims none (the trailing
+        // zeros come after a non-zero digit), and `0%` dims
+        // the lone `0` because it's still the leading zero
+        // of its token.
+        let leadingZeroIndices: Set<Int> = {
+            var indices: Set<Int> = []
+            var inLeadingRun = true
+            for i in 0..<chars.count {
+                let ch = chars[i]
+                if inLeadingRun && ch == "0" {
+                    indices.insert(i)
+                } else if ch == "0" {
+                    // 0 outside a run: ignored, no state change
+                } else if ch.isWhitespace || ch == "/" {
+                    // Token boundary — re-enter the run for
+                    // the next token's prefix.
+                    inLeadingRun = true
+                } else {
+                    // Anything else (digits 1-9, `:`, `%`,
+                    // letters…) ends the current run.
+                    inLeadingRun = false
+                }
+            }
+            return indices
+        }()
         for i in 0..<chars.count {
             let ch = chars[i]
             let opacity: Double = {
@@ -558,36 +590,14 @@ struct NotchView: View {
                    (ch == ":" || ch == "/" || ch == "%") {
                     return 0.7
                 }
-                // Leading zero: `0` at the start of a
-                // TOKEN (start of string, after whitespace,
-                // or after `/`) AND padding a real value
-                // (the token's first digit-run has at least
-                // one non-zero digit).
-                //
-                // The token boundary is what makes `03:00 /
-                // 03:29` dim both `0`s before the `3`s (each
-                // sits at the start of its own token), while
-                // the `0` before the `9` in `03:09` stays
-                // bright — it's mid-token, after the `:`
-                // separator, not at the start of a fresh
-                // value.
-                if ch == "0" {
-                    let prevIsTokenBoundary = i == 0
-                        || chars[i - 1].isWhitespace
-                        || chars[i - 1] == "/"
-                    if prevIsTokenBoundary {
-                        var j = i + 1
-                        var hasNonZeroDigit = false
-                        while j < chars.count,
-                              chars[j].isNumber {
-                            if chars[j] != "0" {
-                                hasNonZeroDigit = true
-                                break
-                            }
-                            j += 1
-                        }
-                        if hasNonZeroDigit { return 0.5 }
-                    }
+                // Leading zero — precomputed above. Dims
+                // the whole zero-prefix of each token,
+                // including all-zero runs like the `00` in
+                // `00:53` (the minutes value is zero,
+                // padded for width). Mid-token zeros stay
+                // bright (`03:09`'s second `0`).
+                if leadingZeroIndices.contains(i) {
+                    return 0.5
                 }
                 return 1.0
             }()
@@ -655,16 +665,20 @@ enum Geometry {
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
         guard let a else { return 0 }
-        if let title = a.media?.title, !title.isEmpty {
-            // Same cap MarqueeText uses; long titles ride the
-            // ticker inside this width rather than widening
-            // the pill.
-            let maxTitleWidth: CGFloat = 120
-            let titleWidth = min(
-                measureText(title, size: 13),
-                maxTitleWidth)
-            // artwork (18) + HStack spacing (6) + title
-            return 18 + 6 + titleWidth
+        if a.media?.title != nil {
+            // Pinned width regardless of the song's natural
+            // text width. Used to be \`min(measured, cap)\`,
+            // which made the pill (and the expanded dropdown
+            // that grows from it) shrink and grow with each
+            // track. That reflow was jarring when skipping
+            // — fix at the cap so "Bad Habit" and "I Had
+            // Some Help (Feat. Morgan Wallen)" produce the
+            // same compact + expanded geometry; MarqueeText
+            // pads short titles inside the slot and tickers
+            // long ones.
+            let titleSlot: CGFloat = 120
+            // artwork (18) + HStack spacing (6) + title slot
+            return 18 + 6 + titleSlot
         }
         return a.compactLeadingImage != nil ? 18 : 0
     }
@@ -811,7 +825,10 @@ private struct MarqueeText: View {
     var body: some View {
         let measured = Geometry.measureText(text, size: fontSize)
         let overflow = max(0, measured - maxWidth)
-        let containerWidth = overflow > 0 ? maxWidth : measured
+        // Always render at full `maxWidth` so the parent's
+        // geometry doesn't shift when the text content changes.
+        // Short labels pad inside the slot (alignment: .leading);
+        // long labels scroll inside the same slot.
         Group {
             if overflow > 0 {
                 TimelineView(.animation) { context in
@@ -819,13 +836,13 @@ private struct MarqueeText: View {
                         .offset(x: -offset(
                             at: context.date,
                             overflow: overflow))
-                        .frame(width: containerWidth,
+                        .frame(width: maxWidth,
                                alignment: .leading)
                         .clipped()
                 }
             } else {
                 label
-                    .frame(width: containerWidth,
+                    .frame(width: maxWidth,
                            alignment: .leading)
             }
         }
