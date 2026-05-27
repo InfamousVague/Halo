@@ -755,10 +755,10 @@ private struct PortExpandedView: View {
                 // 2-column grid — at the expanded width the
                 // card is wide enough to fit two port cards
                 // side by side, which reads better than a
-                // single tall list. Caps at 5 entries (Port
-                // sorts by port number and prefixes to 5
-                // before publishing), so the grid is at most
-                // 3 rows tall.
+                // single tall list. Caps at 6 entries (Port
+                // sorts by port number and prefixes to 6
+                // before publishing), filling a 2×3 grid
+                // exactly.
                 LazyVGrid(
                     columns: [
                         GridItem(.flexible(),

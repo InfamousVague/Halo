@@ -788,11 +788,12 @@ enum Geometry {
             // Header row (eyebrow + count, ~30pt) + divider +
             // 2-column grid of port rows. With the standard
             // `expandedMinWidth` (440pt) we fit two cards per
-            // row comfortably; up to 5 entries means at most
-            // ceil(5 / 2) = 3 grid rows. 30pt per row covers
-            // the 12pt label + the row's vertical padding plus
-            // a touch for the inter-row gap.
-            let entryCount = min(5,
+            // row comfortably; up to 6 entries means at most
+            // ceil(6 / 2) = 3 grid rows, exactly filling the
+            // 2×3 grid. 30pt per row covers the 12pt label
+            // + the row's vertical padding plus a touch for
+            // the inter-row gap.
+            let entryCount = min(6,
                 a?.port?.entries.count ?? 0)
             let gridRows = (entryCount + 1) / 2
             let headerHeight: CGFloat = 30
