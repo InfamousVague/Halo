@@ -1,4 +1,6 @@
 import AppKit
+import IOKit
+import IOKit.hid
 import IOKit.ps
 
 /// Mac battery + charging state via IOKit. No permission
@@ -43,7 +45,9 @@ final class BatteryPublisher: HaloPublisher {
             return
         }
         // Show only at the salient moments — let the system
-        // battery icon cover the middle of the range.
+        // battery icon cover the middle of the range. Hovering
+        // any-time access lives on the AirPods / Now Playing
+        // pills, not here.
         let interesting =
             info.isCharging || info.percent <= 20 || info.percent >= 99
         guard interesting else {
@@ -52,6 +56,11 @@ final class BatteryPublisher: HaloPublisher {
         }
         let symbol = batterySymbol(
             percent: info.percent, charging: info.isCharging)
+        let devices = readConnectedHIDBatteries()
+        let battery = LiveActivityCoordinator.BatteryInfo(
+            macPercent: info.percent,
+            macCharging: info.isCharging,
+            devices: devices)
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
@@ -62,7 +71,13 @@ final class BatteryPublisher: HaloPublisher {
             // Low battery is urgent — bump priority so it
             // interrupts ambient publishers. Charging/full
             // are informational.
-            priority: info.percent <= 20 ? 75 : 35)
+            priority: info.percent <= 20 ? 75 : 35,
+            battery: battery,
+            // Inline bolt glyph BEFORE the percentage when
+            // charging — unmistakable charging indicator on
+            // top of the battery-icon's already-embedded bolt.
+            compactTrailingPrefixSymbol:
+                info.isCharging ? "bolt.fill" : nil)
         coordinator?.inject(payload)
     }
 
@@ -110,5 +125,80 @@ final class BatteryPublisher: HaloPublisher {
         case 50..<75:  return "battery.75"
         default:       return "battery.100"
         }
+    }
+
+    // MARK: - HID accessories
+
+    /// Enumerates every `IOHIDDevice` IORegistry entry that
+    /// publishes a `BatteryPercent` property and returns it as
+    /// a tidy list for the expanded card. Catches Magic Mouse
+    /// / Magic Trackpad / Magic Keyboard (Apple's accessories
+    /// register `BatteryPercent` on themselves) plus any
+    /// third-party HID that follows the same convention.
+    ///
+    /// Cheap — single matching-dict registry walk; takes a few
+    /// milliseconds even with many devices attached. We call it
+    /// on every 30s publish tick, no caching required.
+    private func readConnectedHIDBatteries()
+        -> [LiveActivityCoordinator.ConnectedBatteryDevice]
+    {
+        var devices: [LiveActivityCoordinator
+            .ConnectedBatteryDevice] = []
+        var iter: io_iterator_t = 0
+        let matching = IOServiceMatching("IOHIDDevice")
+        guard IOServiceGetMatchingServices(
+            kIOMainPortDefault, matching, &iter
+        ) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(iter) }
+
+        var seen: Set<String> = []
+        var svc = IOIteratorNext(iter)
+        while svc != 0 {
+            defer {
+                IOObjectRelease(svc)
+                svc = IOIteratorNext(iter)
+            }
+            guard let pct = IORegistryEntryCreateCFProperty(
+                svc, "BatteryPercent" as CFString,
+                kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? Int else { continue }
+            let name = (IORegistryEntryCreateCFProperty(
+                svc, "Product" as CFString,
+                kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? String) ?? "Device"
+            // Multiple HID interfaces on the same device
+            // (a Magic Keyboard exposes keyboard + Touch ID
+            // sensor as separate IOHIDDevice nodes, both
+            // carrying the same BatteryPercent). Dedupe by
+            // product name so the user sees one row per
+            // physical accessory.
+            let key = "\(name)|\(pct)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            devices.append(.init(
+                name: name,
+                percent: pct,
+                symbol: hidSymbol(for: name)))
+        }
+        return devices.sorted { $0.name < $1.name }
+    }
+
+    /// SF Symbol best-guess for a HID accessory's product
+    /// string. Matches the system's own Bluetooth menu icons
+    /// where possible so the expanded card reads as native.
+    private func hidSymbol(for name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("trackpad") {
+            return "rectangle.fill.on.rectangle.fill"
+        }
+        if n.contains("mouse") { return "magicmouse.fill" }
+        if n.contains("keyboard") { return "keyboard.fill" }
+        if n.contains("pencil") || n.contains("pen") {
+            return "applepencil"
+        }
+        if n.contains("airpod") || n.contains("beats") {
+            return "airpods"
+        }
+        return "dot.radiowaves.left.and.right"
     }
 }

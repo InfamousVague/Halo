@@ -314,6 +314,7 @@ struct NotchHostRoot: View {
     var body: some View {
         NotchView(
             activity: coordinator.topActivity,
+            allActivities: coordinator.activities,
             cycleSlot: coordinator.cycleIndex,
             layout: layout,
             isExpanded: hover.isExpanded,

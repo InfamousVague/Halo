@@ -19,6 +19,12 @@ struct NotchView: View {
     /// Currently-displayed activity from the coordinator's
     /// cycle — single slot at a time, swaps every 4s.
     var activity: LiveActivityCoordinator.Resolved?
+    /// Every currently-active payload. Most of the renderer
+    /// only cares about `activity` (the one being shown), but
+    /// the expanded BatteryExpandedView needs to peek at the
+    /// AirPods activity too so it can list every connected
+    /// device in one place. Passed through to ExpandedCard.
+    var allActivities: [LiveActivityCoordinator.Resolved] = []
     /// Coordinator's cycle index. Not used in rendering — it's
     /// here so SwiftUI re-evaluates the view when the index
     /// advances even if the underlying `activity` reference
@@ -68,6 +74,15 @@ struct NotchView: View {
     /// view, just priority shuffles, so they shouldn't flash
     /// the accent line every time.
     @State private var recentlyShownAt: [String: Date] = [:]
+
+    /// Cheap "is the AirPods publisher also running?" check
+    /// — passed into `Geometry.islandFrame` so the battery
+    /// expanded card knows to reserve a row for the AirPods
+    /// rollup even when its own activity payload doesn't
+    /// carry the bud state.
+    private var hasAirpodsActivity: Bool {
+        allActivities.contains { $0.id == "halo.airpods" }
+    }
 
     /// Default minimum sidePad — see `Geometry.sidePad`.
     private var sidePad: CGFloat { Geometry.sidePad }
@@ -182,7 +197,8 @@ struct NotchView: View {
         // `.frame()` — both interpolate together through any
         // width changes during the trace.
         let frame = Geometry.islandFrame(
-            for: a, layout: layout, expanded: isExpanded)
+            for: a, layout: layout, expanded: isExpanded,
+            hasAirpods: hasAirpodsActivity)
         let stroke = StrokeStyle(
             lineWidth: 1,
             lineCap: .round,
@@ -218,7 +234,8 @@ struct NotchView: View {
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
         let frame = Geometry.islandFrame(
-            for: a, layout: layout, expanded: isExpanded)
+            for: a, layout: layout, expanded: isExpanded,
+            hasAirpods: hasAirpodsActivity)
         let totalWidth = frame.width
         let totalHeight = frame.height
         let centerX = frame.midX
@@ -250,7 +267,9 @@ struct NotchView: View {
                 .opacity(isExpanded ? 0 : 1)
 
                 if isExpanded {
-                    ExpandedCard(activity: a)
+                    ExpandedCard(
+                        activity: a,
+                        allActivities: allActivities)
                         .frame(width: totalWidth,
                                height: totalHeight - compactRowHeight,
                                alignment: .top)
@@ -516,14 +535,26 @@ struct NotchView: View {
             // roll. Espresso's 1Hz countdown / music position
             // / volume HUD percentages now ticker rather than
             // crossfade.
-            Self.dimmedUnitsText(
-                text,
-                baseColor: Self.pillTrailingTextColor(for: a))
-                .font(.system(size: 13))
-                .lineLimit(1)
-                .fixedSize()
-                .contentTransition(.numericText())
-                .id("trail-text-\(a.id)")
+            //
+            // Optional `compactTrailingPrefixSymbol` (SF Symbol
+            // name) renders inline as a glyph BEFORE the
+            // dimmed text — used by the battery pill to
+            // prepend a bolt when the Mac is charging.
+            let baseColor = Self.pillTrailingTextColor(for: a)
+            HStack(spacing: 3) {
+                if let sym = a.compactTrailingPrefixSymbol {
+                    Image(systemName: sym)
+                        .font(.system(size: 11,
+                                      weight: .semibold))
+                        .foregroundStyle(baseColor)
+                }
+                Self.dimmedUnitsText(text, baseColor: baseColor)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .contentTransition(.numericText())
+            }
+            .id("trail-text-\(a.id)")
         } else if let img = a.compactTrailingImage {
             Image(nsImage: tintImage(
                 img, color: Self.pillIconColor(for: a)))
@@ -741,7 +772,15 @@ enum Geometry {
     ) -> CGFloat {
         guard let a else { return 0 }
         if let text = a.compactTrailingText {
-            return measureText(text, size: 13)
+            var w = measureText(text, size: 13)
+            // The inline glyph (bolt for the charging battery
+            // pill, …) renders at ~11pt + a 3pt gap before
+            // the text. Add it to the measured width so the
+            // pill grows enough to fit both.
+            if a.compactTrailingPrefixSymbol != nil {
+                w += 13
+            }
+            return w
         }
         if a.compactTrailingImage != nil { return 16 }
         return 0
@@ -753,7 +792,8 @@ enum Geometry {
     /// island fit content tightly rather than sitting on a
     /// fixed bottom-padding floor.
     static func expandedExtraHeight(
-        for a: LiveActivityCoordinator.Resolved?
+        for a: LiveActivityCoordinator.Resolved?,
+        hasAirpods: Bool = false
     ) -> CGFloat {
         // 12 top + 10 bottom — matches `ExpandedCard`'s
         // internal vertical insets. Less than the horizontal
@@ -767,6 +807,18 @@ enum Geometry {
             // % over an absolute-value sublabel) + 2 gaps × 10pt
             // = 92pt
             content = 92
+        case "halo.battery":
+            // Mac header row (~38pt — eyebrow + percentage +
+            // optional Charging pill) + divider + a row per
+            // connected device (~32pt: 11pt label + 5pt vert
+            // pad × 2 + breathing). Plus +1 row when AirPods
+            // is active (surfaced by BatteryExpandedView from
+            // the sibling `halo.airpods` activity). Empty-
+            // state shows a small "no devices" placeholder.
+            let hidCount = a?.battery?.devices.count ?? 0
+            let rowCount = max(1,
+                hidCount + (hasAirpods ? 1 : 0))
+            content = 38 + 12 + CGFloat(rowCount) * 32
         case "halo.airpods":
             // Header row (~26pt with the device name on its
             // second line) + divider + the row of three
@@ -838,7 +890,8 @@ enum Geometry {
     static func islandFrame(
         for a: LiveActivityCoordinator.Resolved?,
         layout: NotchLayout,
-        expanded: Bool = false
+        expanded: Bool = false,
+        hasAirpods: Bool = false
     ) -> CGRect {
         let notchW = layout.notchTrailingX - layout.notchLeadingX
         let leadW = leadingWidth(for: a)
@@ -865,7 +918,8 @@ enum Geometry {
         // visually consistent.
         var leftEdge = layout.notchLeadingX - leftHalf
         if expanded {
-            totalHeight += expandedExtraHeight(for: a)
+            totalHeight += expandedExtraHeight(
+                for: a, hasAirpods: hasAirpods)
             let notchCenter =
                 layout.notchLeadingX + notchW / 2
             totalWidth = expandedWidth

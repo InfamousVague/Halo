@@ -49,6 +49,17 @@ final class LiveActivityCoordinator {
         /// the full per-bud breakdown rather than just the
         /// single "lowest of the two" number on the pill.
         let airpods: AirPodsInfo?
+        /// Optional Battery-specific payload — internal Mac
+        /// state plus an enumeration of every connected HID
+        /// accessory that publishes BatteryPercent in
+        /// IORegistry (Magic Mouse / Trackpad / Keyboard, …).
+        let battery: BatteryInfo?
+        /// Optional SF Symbol rendered inline as a glyph BEFORE
+        /// the trailing text. Lets the battery pill prepend a
+        /// lightning bolt when charging without having to bake
+        /// it into the leading icon. Nil for activities that
+        /// don't decorate their value.
+        let compactTrailingPrefixSymbol: String?
 
         init(
             id: String,
@@ -60,7 +71,9 @@ final class LiveActivityCoordinator {
             media: MediaInfo? = nil,
             worktree: WorktreeInfo? = nil,
             port: PortInfo? = nil,
-            airpods: AirPodsInfo? = nil
+            airpods: AirPodsInfo? = nil,
+            battery: BatteryInfo? = nil,
+            compactTrailingPrefixSymbol: String? = nil
         ) {
             self.id = id
             self.compactLeadingImage = compactLeadingImage
@@ -72,6 +85,9 @@ final class LiveActivityCoordinator {
             self.worktree = worktree
             self.port = port
             self.airpods = airpods
+            self.battery = battery
+            self.compactTrailingPrefixSymbol =
+                compactTrailingPrefixSymbol
         }
 
         static func == (l: Resolved, r: Resolved) -> Bool {
@@ -93,8 +109,39 @@ final class LiveActivityCoordinator {
             l.worktree?.worktrees == r.worktree?.worktrees &&
             l.worktree?.savedProjects == r.worktree?.savedProjects &&
             l.port?.entries == r.port?.entries &&
-            l.airpods == r.airpods
+            l.airpods == r.airpods &&
+            l.battery == r.battery &&
+            l.compactTrailingPrefixSymbol
+                == r.compactTrailingPrefixSymbol
         }
+    }
+
+    /// Battery state payload — covers the internal Mac
+    /// battery plus an enumeration of connected HID
+    /// accessories. The expanded card lists everything in one
+    /// place so the user can glance at the notch and see
+    /// every device they care about (Mac, Magic Mouse,
+    /// Trackpad, Keyboard, …) without opening System
+    /// Settings.
+    struct BatteryInfo: Equatable {
+        let macPercent: Int
+        let macCharging: Bool
+        /// Connected HID accessories (Magic Mouse / Trackpad /
+        /// Keyboard, third-party HID with battery, …) read
+        /// from IORegistry's `BatteryPercent` key. Empty when
+        /// no accessory is connected or reporting.
+        let devices: [ConnectedBatteryDevice]
+    }
+
+    struct ConnectedBatteryDevice: Equatable, Hashable {
+        let name: String
+        let percent: Int
+        /// SF Symbol the expanded card renders to the left of
+        /// the device name. Inferred from the product string
+        /// — `magicmouse.fill` for Magic Mouse, etc.; falls
+        /// back to a generic `dot.radiowaves.left.and.right`
+        /// when we can't classify it.
+        let symbol: String
     }
 
     /// AirPods state payload — Halo decodes from the BLE
