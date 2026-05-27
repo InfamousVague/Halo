@@ -421,12 +421,15 @@ struct NotchView: View {
                     // doesn't fit — long track names ("I Had
                     // Some Help (Feat. Morgan Wallen)") used
                     // to push the pill across the screen.
+                    // Title stays white so it reads as the
+                    // primary data; the source-app tint
+                    // belongs on the icons / time read-out.
                     MarqueeText(
                         text: title,
                         font: .system(size: 13,
                                       weight: .medium),
                         fontSize: 13,
-                        color: Self.pillTextColor(for: a),
+                        color: .white,
                         maxWidth: 120)
                 }
             }
