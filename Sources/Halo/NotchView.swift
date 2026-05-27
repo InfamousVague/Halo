@@ -530,6 +530,23 @@ struct NotchView: View {
             }
             return false
         }()
+        // Index where the leading-zero prefix ends. Only `0`s
+        // at indices < this point dim. A `0` that appears
+        // later in the string — after a `:`, in the middle of
+        // a value, anywhere — is part of the value and stays
+        // bright. We also skip the dim treatment entirely if
+        // the leading run isn't padding anything (a lone "0"
+        // with no digits after it, like `0%`, *is* the value
+        // — not a placeholder).
+        let leadingZeroEnd: Int = {
+            var i = 0
+            while i < chars.count && chars[i] == "0" {
+                i += 1
+            }
+            let hasMoreDigits = chars.dropFirst(i)
+                .contains(where: { $0.isNumber })
+            return hasMoreDigits ? i : 0
+        }()
         for i in 0..<chars.count {
             let ch = chars[i]
             let isUnit: Bool = {
@@ -553,22 +570,17 @@ struct NotchView: View {
                    (ch == ":" || ch == "/" || ch == "%") {
                     return true
                 }
-                // Leading zero: a `0` at the start of a
-                // numeric run that has at least one more
-                // digit after it. So the `0` in `01:23` and
-                // both `0`s in `01h 05m` dim, but the `0` in
-                // `10:23` (preceded by `1`) stays bright,
-                // and a lone `0` like `0%` stays bright too
-                // (no digit follows, so it's the value not
-                // padding).
-                if ch == "0" {
-                    let prevIsDigit = i > 0
-                        && chars[i - 1].isNumber
-                    let nextIsDigit = i + 1 < chars.count
-                        && chars[i + 1].isNumber
-                    if !prevIsDigit && nextIsDigit {
-                        return true
-                    }
+                // Leading zero: a `0` strictly inside the
+                // leading-zero prefix of the whole label.
+                // `01:23` → the `0` at index 0 dims, the `0`
+                // after the colon stays bright (it's in the
+                // middle of the displayed number, not at the
+                // start). `00:48` → both `0`s at the very
+                // start dim. `10:23` → no leading zeros at
+                // all. `0%` (no digits after the lone `0`) →
+                // bright, since it's the value not padding.
+                if ch == "0" && i < leadingZeroEnd {
+                    return true
                 }
                 return false
             }()
