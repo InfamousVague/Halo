@@ -692,13 +692,17 @@ enum Geometry {
     /// Minimum gap between content and the physical notch
     /// cutout so the icon/text never sit under the camera.
     static let notchClearance: CGFloat = 12
-    /// Standard width the island grows to when expanded so
-    /// every dropdown has the same comfortable footprint
-    /// regardless of which activity drives it. The pill only
-    /// grows past this when its natural width already exceeds
-    /// 440 (long music titles, etc); otherwise both wings
-    /// pad out symmetrically so the card centres on the notch.
-    static let expandedMinWidth: CGFloat = 440
+    /// Standard fixed width the island always grows to when
+    /// expanded. Every dropdown sits in the exact same
+    /// footprint regardless of which activity is driving it
+    /// (Port grid, Worktree branches, Now Playing controls,
+    /// AirPods cells, …) — the card centres on the notch
+    /// and the compact pill morphs into / out of this single
+    /// canonical shape on hover. Sized to comfortably hold
+    /// the Now-Playing compact row (18pt artwork + 6pt gap
+    /// + 120pt title slot + insets + notch + trailing time)
+    /// which is the widest of any pill we render.
+    static let expandedWidth: CGFloat = 480
 
     /// Predicted width of the leading content slot for an
     /// activity. Mirrors `NotchView.leadingContent`'s sizes:
@@ -849,21 +853,23 @@ enum Geometry {
         var totalHeight = layout.menuBarHeight + 1
         // When compact the pill hangs asymmetrically off the
         // notch's leading edge so it tracks the menu bar's
-        // built-in clock. When expanded we instead grow to a
-        // standard `expandedMinWidth` and centre on the notch
-        // so every dropdown reads as the same UI element
-        // regardless of which publisher is driving it — the
-        // 2x2 Port grid, Worktree's branch list, Now Playing's
-        // controls all sit in the same comfortable footprint.
+        // built-in clock. When expanded we snap to a single
+        // canonical `expandedWidth` and centre on the notch
+        // — every dropdown reads as the same UI element
+        // regardless of which publisher is driving it (Port
+        // grid, Worktree branches, Now Playing controls, …).
+        // The width is a strict force, not a minimum: even
+        // pills that are naturally wider than the expanded
+        // width (the Now Playing title slot is borderline)
+        // get squeezed down to match so the card outline is
+        // visually consistent.
         var leftEdge = layout.notchLeadingX - leftHalf
         if expanded {
             totalHeight += expandedExtraHeight(for: a)
-            if totalWidth < expandedMinWidth {
-                let notchCenter =
-                    layout.notchLeadingX + notchW / 2
-                totalWidth = expandedMinWidth
-                leftEdge = notchCenter - totalWidth / 2
-            }
+            let notchCenter =
+                layout.notchLeadingX + notchW / 2
+            totalWidth = expandedWidth
+            leftEdge = notchCenter - totalWidth / 2
         }
         return CGRect(
             x: leftEdge, y: 0,
