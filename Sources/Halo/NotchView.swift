@@ -584,15 +584,22 @@ struct NotchView: View {
 
     /// Paint a template NSImage with the activity's tint.
     private func tintImage(_ img: NSImage, color: Color) -> NSImage {
+        Self.tinted(img, color: color)
+    }
+
+    /// Static variant the expanded views in `ExpandedCard` use
+    /// to colour their header glyphs without each one having
+    /// to re-implement the source-atop fill.
+    static func tinted(_ img: NSImage, color: Color) -> NSImage {
         let nsColor = NSColor(color)
-        let tinted = img.copy() as! NSImage
-        tinted.isTemplate = false
-        tinted.lockFocus()
+        let copy = img.copy() as! NSImage
+        copy.isTemplate = false
+        copy.lockFocus()
         nsColor.set()
-        let rect = NSRect(origin: .zero, size: tinted.size)
+        let rect = NSRect(origin: .zero, size: copy.size)
         rect.fill(using: .sourceAtop)
-        tinted.unlockFocus()
-        return tinted
+        copy.unlockFocus()
+        return copy
     }
 }
 
@@ -676,8 +683,10 @@ enum Geometry {
         let content: CGFloat
         switch a?.id {
         case "halo.stats":
-            // 3 rows × 20pt + 2 gaps × 10pt = 80pt
-            content = 80
+            // 3 rows × 24pt (bar + two-line right column with
+            // % over an absolute-value sublabel) + 2 gaps × 10pt
+            // = 92pt
+            content = 92
         case "halo.nowplaying":
             // Artwork is 44pt tall and dominates the row. The
             // title + artist + scrubber stack and the

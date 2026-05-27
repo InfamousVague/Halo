@@ -64,7 +64,7 @@ struct ExpandedCard: View {
         Group {
             switch activity.id {
             case "halo.stats":
-                StatsExpandedView()
+                StatsExpandedView(activity: activity)
             case "espresso":
                 EspressoExpandedView(activity: activity)
             case "halo.nowplaying":
@@ -156,16 +156,20 @@ private struct WorktreeExpandedView: View {
             .map { $0 }
     }
 
+    private var brand: Color {
+        NotchView.pillTextColor(for: activity)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header row — current state.
             HStack(spacing: 10) {
                 if let img = activity.compactLeadingImage {
-                    Image(nsImage: img)
+                    Image(nsImage: NotchView.tinted(
+                        img, color: brand))
                         .resizable()
                         .scaledToFit()
                         .frame(width: 18, height: 18)
-                        .foregroundStyle(.haloTertiary)
                 }
                 Text(currentLabel)
                     .font(.system(size: 12, weight: .semibold))
@@ -176,18 +180,29 @@ private struct WorktreeExpandedView: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(
-                            Capsule().fill(
-                                Color.orange.opacity(0.22)))
-                        .foregroundStyle(.orange.opacity(0.85))
+                            Capsule().fill(brand.opacity(0.22)))
+                        .overlay(
+                            Capsule().stroke(
+                                brand.opacity(0.35),
+                                lineWidth: 0.5))
+                        .foregroundStyle(brand)
                 }
                 Spacer(minLength: 0)
+                if let branchCount = info?.branches.count,
+                   branchCount > 0 {
+                    Text("\(branchCount) "
+                         + (branchCount == 1
+                            ? "branch" : "branches"))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.haloTertiary)
+                }
             }
             if !otherBranches.isEmpty {
                 Divider()
                     .background(Color.haloSurfaceFaint)
                 VStack(spacing: 4) {
                     ForEach(otherBranches, id: \.self) { b in
-                        BranchRow(name: b) {
+                        BranchRow(name: b, tint: brand) {
                             switchTo(b)
                         }
                     }
@@ -215,6 +230,7 @@ private struct WorktreeExpandedView: View {
 
 private struct BranchRow: View {
     let name: String
+    let tint: Color
     let action: () -> Void
 
     var body: some View {
@@ -222,7 +238,7 @@ private struct BranchRow: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 10))
-                    .foregroundStyle(.haloSecondary)
+                    .foregroundStyle(tint.opacity(0.85))
                 Text(name)
                     .font(.system(size: 12))
                     .foregroundStyle(.haloSecondary)
@@ -344,12 +360,13 @@ private struct NowPlayingExpandedView: View {
             guard duration > 0 else { return 0 }
             return min(1, max(0, livePosition / duration))
         }()
+        let tint = NotchView.pillTextColor(for: activity)
         return GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Color.haloSurfaceSoft)
                 Capsule()
-                    .fill(Color.white.opacity(0.85))
+                    .fill(tint)
                     .frame(width: max(2, proxy.size.width
                                       * CGFloat(progress)))
             }
@@ -435,11 +452,11 @@ private struct ControlButton: View {
 
 // MARK: - Espresso
 
-/// Single row showing the current keep-awake state (`ON` /
-/// countdown / `OFF`) with an "End session" CTA visible only
-/// while a session is active. Stops via a distributed
-/// notification — Espresso's pane listens and calls
-/// `store.deactivate()`.
+/// Header row (icon + label + countdown) above an action row
+/// of quick-extend buttons + an End-session CTA. All four
+/// buttons post distributed notifications — Espresso's pane
+/// listens and calls `store.extend(byMinutes:)` or
+/// `store.deactivate()` on the other side.
 private struct EspressoExpandedView: View {
     let activity: LiveActivityCoordinator.Resolved
 
@@ -449,51 +466,120 @@ private struct EspressoExpandedView: View {
         // literally "OFF".
         (activity.compactTrailingText ?? "OFF") != "OFF"
     }
+    private var brand: Color {
+        NotchView.pillTextColor(for: activity)
+    }
+    private var isIndefinite: Bool {
+        // Extend buttons only make sense when the session has
+        // an end date to push out. The pane writes "ON" for
+        // indefinite sessions.
+        (activity.compactTrailingText ?? "OFF") == "ON"
+    }
 
     var body: some View {
-        HStack(spacing: 12) {
-            if let img = activity.compactLeadingImage {
-                Image(nsImage: img)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 26, height: 26)
-                    .foregroundStyle(.haloTertiary)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("ESPRESSO")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.4)
-                    .foregroundStyle(.haloSecondary)
-                Text(activity.compactTrailingText ?? "OFF")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white)
-            }
-            Spacer(minLength: 0)
-            if isActive {
-                Button {
-                    DistributedNotificationCenter.default()
-                        .postNotificationName(
-                            Notification.Name(
-                                "com.mattssoftware.espresso.stop"),
-                            object: nil,
-                            deliverImmediately: true)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9))
-                        Text("End session")
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule().fill(Color.haloSurfaceSoft))
-                    .foregroundStyle(.white)
-                    .font(.system(size: 11, weight: .semibold))
+        VStack(alignment: .leading, spacing: 8) {
+            // Header — current state.
+            HStack(spacing: 12) {
+                if let img = activity.compactLeadingImage {
+                    Image(nsImage: NotchView.tinted(
+                        img, color: brand))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
                 }
-                .buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ESPRESSO")
+                        .font(.system(size: 11,
+                                      weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(brand.opacity(0.85))
+                    NotchView.dimmedUnitsText(
+                        activity.compactTrailingText ?? "OFF",
+                        baseColor: .white)
+                        .font(.system(size: 14,
+                                      weight: .semibold))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                Spacer(minLength: 0)
+            }
+            // Action row — extend by N minutes, then End.
+            if isActive {
+                HStack(spacing: 6) {
+                    if !isIndefinite {
+                        ExtendPill(label: "+15m", tint: brand) {
+                            extend(15)
+                        }
+                        ExtendPill(label: "+30m", tint: brand) {
+                            extend(30)
+                        }
+                        ExtendPill(label: "+1h", tint: brand) {
+                            extend(60)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    Button(action: end) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 9))
+                            Text("End")
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(
+                                Color.white.opacity(0.10)))
+                        .foregroundStyle(.white)
+                        .font(.system(size: 11,
+                                      weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func extend(_ minutes: Int) {
+        DistributedNotificationCenter.default()
+            .postNotificationName(
+                Notification.Name(
+                    "com.mattssoftware.espresso.extend"),
+                object: String(minutes),
+                deliverImmediately: true)
+    }
+    private func end() {
+        DistributedNotificationCenter.default()
+            .postNotificationName(
+                Notification.Name(
+                    "com.mattssoftware.espresso.stop"),
+                object: nil,
+                deliverImmediately: true)
+    }
+}
+
+/// Small brand-tinted pill button for Espresso's
+/// quick-extend row.
+private struct ExtendPill: View {
+    let label: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .monospacedDigit()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule().fill(tint.opacity(0.18)))
+                .overlay(
+                    Capsule().stroke(tint.opacity(0.35),
+                                     lineWidth: 0.5))
+                .foregroundStyle(tint)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -505,19 +591,47 @@ private struct EspressoExpandedView: View {
 /// publisher uses its own state so we re-sample here
 /// independently).
 private struct StatsExpandedView: View {
+    let activity: LiveActivityCoordinator.Resolved
+
     @State private var cpu: Int = 0
     @State private var ram: Int = 0
     @State private var disk: Int = 0
+    /// Bytes used / total per metric. RAM and disk surface the
+    /// absolute numbers ("12.4 GB / 36.0 GB"); CPU's right
+    /// column just shows the active-core count.
+    @State private var ramBytes: (used: UInt64, total: UInt64) =
+        (0, 0)
+    @State private var diskBytes: (used: UInt64, total: UInt64) =
+        (0, 0)
     /// CPU tick deltas — first sample seeds, second onwards
     /// yields a usable percentage.
     @State private var prevCPUTicks: (total: UInt64, idle: UInt64)?
     @State private var timer: Timer?
 
+    private var brand: Color {
+        NotchView.pillTextColor(for: activity)
+    }
+    private var cpuCores: Int {
+        ProcessInfo.processInfo.activeProcessorCount
+    }
+
     var body: some View {
         VStack(spacing: 10) {
-            StatRow(symbol: "cpu", value: cpu)
-            StatRow(symbol: "memorychip", value: ram)
-            StatRow(symbol: "internaldrive", value: disk)
+            StatRow(
+                symbol: "cpu",
+                value: cpu,
+                detail: "\(cpuCores) cores",
+                tint: brand)
+            StatRow(
+                symbol: "memorychip",
+                value: ram,
+                detail: Self.formatBytes(ramBytes),
+                tint: brand)
+            StatRow(
+                symbol: "internaldrive",
+                value: disk,
+                detail: Self.formatBytes(diskBytes),
+                tint: brand)
         }
         .frame(maxWidth: .infinity)
         .onAppear { startSampling() }
@@ -535,8 +649,25 @@ private struct StatsExpandedView: View {
 
     private func sampleAll() {
         cpu = sampleCPU()
-        ram = sampleRAM()
-        disk = sampleDisk()
+        (ram, ramBytes) = sampleRAMDetail()
+        (disk, diskBytes) = sampleDiskDetail()
+    }
+
+    /// `12.4 / 36 GB` — used + total in matching units. Pure
+    /// "used GB" loses context; "GB free" inverts the meaning
+    /// from the bar (which fills with used). This keeps both
+    /// numbers and the bar reading consistently.
+    private static func formatBytes(
+        _ pair: (used: UInt64, total: UInt64)
+    ) -> String {
+        guard pair.total > 0 else { return "—" }
+        let gb = 1024.0 * 1024.0 * 1024.0
+        let used = Double(pair.used) / gb
+        let total = Double(pair.total) / gb
+        // Keep the label short — the row's right column is
+        // narrow and we don't want it stealing space from the
+        // bar.
+        return String(format: "%.1f / %.0f GB", used, total)
     }
 
     private func sampleCPU() -> Int {
@@ -569,7 +700,9 @@ private struct StatsExpandedView: View {
         return Int((Double(busyΔ) / Double(totalΔ)) * 100)
     }
 
-    private func sampleRAM() -> Int {
+    private func sampleRAMDetail()
+        -> (Int, (used: UInt64, total: UInt64))
+    {
         var size = mach_msg_type_number_t(
             MemoryLayout<vm_statistics64_data_t>.size /
             MemoryLayout<integer_t>.size)
@@ -584,64 +717,85 @@ private struct StatsExpandedView: View {
                     $0, &size)
             }
         }
-        guard result == KERN_SUCCESS else { return 0 }
+        guard result == KERN_SUCCESS
+        else { return (0, (0, 0)) }
         let pageSize = UInt64(vm_kernel_page_size)
         let used = (UInt64(stats.active_count)
                     + UInt64(stats.wire_count)
                     + UInt64(stats.compressor_page_count))
                     * pageSize
         let total = ProcessInfo.processInfo.physicalMemory
-        guard total > 0 else { return 0 }
-        return Int((Double(used) / Double(total)) * 100)
+        guard total > 0 else { return (0, (0, 0)) }
+        let pct = Int((Double(used) / Double(total)) * 100)
+        return (pct, (used, total))
     }
 
-    private func sampleDisk() -> Int {
+    private func sampleDiskDetail()
+        -> (Int, (used: UInt64, total: UInt64))
+    {
         var fs = statfs()
-        guard statfs("/", &fs) == 0 else { return 0 }
+        guard statfs("/", &fs) == 0
+        else { return (0, (0, 0)) }
         let blockSize = UInt64(fs.f_bsize)
         let total = UInt64(fs.f_blocks) * blockSize
         let free = UInt64(fs.f_bavail) * blockSize
-        guard total > 0 else { return 0 }
+        guard total > 0 else { return (0, (0, 0)) }
         let used = total &- free
-        return Int((Double(used) / Double(total)) * 100)
+        let pct = Int((Double(used) / Double(total)) * 100)
+        return (pct, (used, total))
     }
 }
 
-/// One metric row: 18pt icon · flex-width bar · 38pt percentage.
-/// Trimmed to the essentials so three rows fit cleanly inside
-/// the expanded card without crowding.
+/// One metric row: 18pt icon · flex-width bar (tinted in the
+/// publisher's brand colour) · 38pt percentage with a small
+/// secondary label underneath (RAM and disk show
+/// used / total in GB, CPU shows the core count).
 private struct StatRow: View {
     let symbol: String
     let value: Int
+    let detail: String
+    let tint: Color
 
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.haloSecondary)
+                .foregroundStyle(tint.opacity(0.85))
                 .frame(width: 18, alignment: .leading)
-            ProgressBar(value: Double(value) / 100.0)
+            ProgressBar(
+                value: Double(value) / 100.0,
+                tint: tint)
                 .frame(height: 5)
                 .frame(maxWidth: .infinity)
-            Text("\(value)%")
-                .font(.system(size: 12))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .frame(width: 38, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text("\(value)%")
+                    .font(.system(size: 12,
+                                  weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                Text(detail)
+                    .font(.system(size: 8,
+                                  weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(.haloTertiary)
+            }
+            .frame(minWidth: 78, alignment: .trailing)
         }
-        .frame(height: 20)
+        .frame(height: 24)
     }
 }
 
 private struct ProgressBar: View {
     let value: Double  // 0...1
+    let tint: Color
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
                     .fill(Color.haloSurfaceSoft)
                 Capsule()
-                    .fill(Color.white.opacity(0.85))
+                    .fill(tint)
                     .frame(width: max(2, proxy.size.width
                                       * CGFloat(min(1, max(0, value)))))
             }
