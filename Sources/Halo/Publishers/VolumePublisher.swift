@@ -65,6 +65,35 @@ final class VolumePublisher: HaloPublisher {
 
     // MARK: - Device binding
 
+    /// Candidate (selector, element) pairs for reading volume
+    /// on the current device. Probed in priority order — the
+    /// first one that responds via `AudioObjectHasProperty`
+    /// becomes the read source, and listeners are registered
+    /// on EVERY pair that responds so a change reported on
+    /// any of them re-publishes the HUD.
+    ///
+    /// Why so many candidates: macOS exposes volume on
+    /// different (selector, element) pairs depending on the
+    /// device. Built-in speakers + USB DACs put it on the
+    /// master element under `kAudioDevicePropertyVolumeScalar`.
+    /// Bluetooth speakers + AirPods often skip the master and
+    /// only expose per-channel scalars on elements 1 + 2.
+    /// `'vmvm'` (cross-device "virtual main") works for some
+    /// AirPods firmware versions but returns 0 on others.
+    /// Trying them all in order guarantees we read SOMETHING
+    /// sane on every device the system menu-bar slider would.
+    private var volumeCandidates: [(AudioObjectPropertySelector,
+                                    AudioObjectPropertyElement)] {
+        [
+            (kVirtualMainVolume,
+             kAudioObjectPropertyElementMain),
+            (kAudioDevicePropertyVolumeScalar,
+             kAudioObjectPropertyElementMain),
+            (kAudioDevicePropertyVolumeScalar, 1),  // left
+            (kAudioDevicePropertyVolumeScalar, 2),  // right
+        ]
+    }
+
     private func rebindDevice(silent: Bool) {
         var newDevice: AudioDeviceID = kAudioObjectUnknown
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -82,31 +111,43 @@ final class VolumePublisher: HaloPublisher {
         else { return }
         device = newDevice
 
-        // Volume listener on the cross-device virtual main —
-        // catches changes on Bluetooth speakers / AirPods /
-        // USB DACs where the per-device VolumeScalar isn't
-        // exposed on the master element.
-        var volAddr = AudioObjectPropertyAddress(
-            mSelector: kVirtualMainVolume,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectAddPropertyListenerBlock(
-            device, &volAddr, DispatchQueue.main
-        ) { [weak self] _, _ in
-            Task { @MainActor in self?.publishCurrent() }
+        // Volume listeners — register on every candidate the
+        // device actually responds to so we catch the change
+        // event whichever element/selector the audio driver
+        // chooses to fire on.
+        for (selector, element) in volumeCandidates {
+            var a = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element)
+            guard AudioObjectHasProperty(device, &a)
+            else { continue }
+            AudioObjectAddPropertyListenerBlock(
+                device, &a, DispatchQueue.main
+            ) { [weak self] _, _ in
+                Task { @MainActor in
+                    self?.publishCurrent()
+                }
+            }
         }
 
-        // Mute listener.
-        var muteAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectAddPropertyListenerBlock(
-            device, &muteAddr, DispatchQueue.main
-        ) { [weak self] _, _ in
-            Task { @MainActor in self?.publishCurrent() }
+        // Mute listener — both master and per-channel mute
+        // selectors, same rationale as volume.
+        for element: AudioObjectPropertyElement in
+            [kAudioObjectPropertyElementMain, 1, 2] {
+            var a = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element)
+            guard AudioObjectHasProperty(device, &a)
+            else { continue }
+            AudioObjectAddPropertyListenerBlock(
+                device, &a, DispatchQueue.main
+            ) { [weak self] _, _ in
+                Task { @MainActor in
+                    self?.publishCurrent()
+                }
+            }
         }
 
         // On a NON-initial bind (user actively switched device),
@@ -144,26 +185,65 @@ final class VolumePublisher: HaloPublisher {
     }
 
     private func readVolume() -> Float {
+        // Try master selectors first — single read, single value.
+        for (selector, element) in volumeCandidates
+            where element == kAudioObjectPropertyElementMain {
+            if let v = readScalar(
+                selector: selector, element: element) {
+                return v
+            }
+        }
+        // Per-channel fallback — average over whichever
+        // channels respond. Bluetooth devices that don't
+        // expose a master element typically expose
+        // VolumeScalar on element 1 (left) + 2 (right); the
+        // mean tracks the system menu-bar slider closely
+        // enough for a HUD readout.
+        var sum: Float = 0
+        var count: Float = 0
+        for element: AudioObjectPropertyElement in [1, 2] {
+            if let v = readScalar(
+                selector: kAudioDevicePropertyVolumeScalar,
+                element: element) {
+                sum += v
+                count += 1
+            }
+        }
+        return count > 0 ? sum / count : 0
+    }
+
+    private func readScalar(
+        selector: AudioObjectPropertySelector,
+        element: AudioObjectPropertyElement
+    ) -> Float? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: element)
+        guard AudioObjectHasProperty(device, &addr)
+        else { return nil }
         var vol: Float32 = 0
         var size = UInt32(MemoryLayout<Float32>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kVirtualMainVolume,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain)
-        AudioObjectGetPropertyData(
+        let status = AudioObjectGetPropertyData(
             device, &addr, 0, nil, &size, &vol)
-        return vol
+        return status == noErr ? vol : nil
     }
 
     private func readMute() -> Bool {
-        var muted: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain)
-        AudioObjectGetPropertyData(
-            device, &addr, 0, nil, &size, &muted)
-        return muted != 0
+        for element: AudioObjectPropertyElement in
+            [kAudioObjectPropertyElementMain, 1, 2] {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: element)
+            guard AudioObjectHasProperty(device, &addr)
+            else { continue }
+            var muted: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            let status = AudioObjectGetPropertyData(
+                device, &addr, 0, nil, &size, &muted)
+            if status == noErr { return muted != 0 }
+        }
+        return false
     }
 }

@@ -185,6 +185,12 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
         } else {
             symbol = "airpods"
         }
+        let info = LiveActivityCoordinator.AirPodsInfo(
+            left: reading.left,
+            right: reading.right,
+            caseBattery: reading.caseBattery,
+            charging: reading.charging,
+            deviceName: activeOutputDeviceName() ?? "")
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
@@ -192,8 +198,42 @@ final class AirPodsPublisher: NSObject, HaloPublisher {
             compactTrailingText: "\(pct)%",
             compactTrailingImage: nil,
             tint: .white,
-            priority: 40)
+            priority: 40,
+            airpods: info)
         coordinator?.inject(payload)
+    }
+
+    /// Reads `kAudioObjectPropertyName` off the system's
+    /// current default output device. The expanded card shows
+    /// it in small text under the AirPods label so a household
+    /// with two pairs of buds can tell which one is connected.
+    private func activeOutputDeviceName() -> String? {
+        var deviceID = AudioDeviceID(0)
+        var idSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var idAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let idStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &idAddr, 0, nil, &idSize, &deviceID)
+        guard idStatus == noErr,
+              deviceID != kAudioObjectUnknown
+        else { return nil }
+
+        var nameRef: Unmanaged<CFString>? = nil
+        var nameSize = UInt32(
+            MemoryLayout<Unmanaged<CFString>?>.size)
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        let nameStatus = AudioObjectGetPropertyData(
+            deviceID, &nameAddr, 0, nil, &nameSize, &nameRef)
+        guard nameStatus == noErr,
+              let cf = nameRef?.takeRetainedValue()
+        else { return nil }
+        return cf as String
     }
 
     /// `true` iff the system's default audio output device

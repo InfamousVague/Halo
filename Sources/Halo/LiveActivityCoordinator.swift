@@ -43,6 +43,12 @@ final class LiveActivityCoordinator {
         /// rows + owning pids the expanded card renders with
         /// per-row kill buttons.
         let port: PortInfo?
+        /// Optional AirPods-specific payload — left/right/case
+        /// battery + charging state + device label. Drives the
+        /// AirPods expanded card so hovering the pill reveals
+        /// the full per-bud breakdown rather than just the
+        /// single "lowest of the two" number on the pill.
+        let airpods: AirPodsInfo?
 
         init(
             id: String,
@@ -53,7 +59,8 @@ final class LiveActivityCoordinator {
             priority: Int,
             media: MediaInfo? = nil,
             worktree: WorktreeInfo? = nil,
-            port: PortInfo? = nil
+            port: PortInfo? = nil,
+            airpods: AirPodsInfo? = nil
         ) {
             self.id = id
             self.compactLeadingImage = compactLeadingImage
@@ -64,6 +71,7 @@ final class LiveActivityCoordinator {
             self.media = media
             self.worktree = worktree
             self.port = port
+            self.airpods = airpods
         }
 
         static func == (l: Resolved, r: Resolved) -> Bool {
@@ -84,8 +92,26 @@ final class LiveActivityCoordinator {
             l.worktree?.lastError == r.worktree?.lastError &&
             l.worktree?.worktrees == r.worktree?.worktrees &&
             l.worktree?.savedProjects == r.worktree?.savedProjects &&
-            l.port?.entries == r.port?.entries
+            l.port?.entries == r.port?.entries &&
+            l.airpods == r.airpods
         }
+    }
+
+    /// AirPods state payload — Halo decodes from the BLE
+    /// proximity-pairing advertisement (see AirPodsPublisher).
+    /// Each bud's battery is `nil` when it's in the case or
+    /// the firmware reported "unknown" (0xF nibble).
+    struct AirPodsInfo: Equatable {
+        let left: Int?
+        let right: Int?
+        let caseBattery: Int?
+        /// True if any bud / the case is currently charging.
+        let charging: Bool
+        /// Human-readable device label drawn from CoreAudio's
+        /// `kAudioObjectPropertyName` on the active output —
+        /// e.g. "Matt's AirPods Pro" or "Beats Studio Buds".
+        /// Empty string if we couldn't resolve a name.
+        let deviceName: String
     }
 
     /// Full Worktree state payload — Halo decodes everything
