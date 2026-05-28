@@ -92,31 +92,38 @@ final class NowPlayingPublisher: HaloPublisher {
 
     // MARK: - Publish
 
-    /// Try sources in order:
-    ///   1. MediaRemote — when it works, this is the cheapest
-    ///      + broadest source (catches Apple Music, podcasts,
-    ///      browsers etc. on macOS where the entitlement gate
-    ///      hasn't bitten us).
-    ///   2. Spotify via AppleScript — only path that works on
-    ///      macOS 14.4+ for Spotify specifically.
-    ///   3. Music.app via AppleScript — for users on macOS
-    ///      versions where MediaRemote silently returned empty
-    ///      for Apple Music too.
-    /// First source with a non-empty playing track wins.
+    /// Collect candidates from every AppleScript source we
+    /// have, prefer one that's actually playing, fall back to
+    /// MediaRemote when nothing else turns anything up.
+    ///
+    /// Why prefer-playing instead of priority-ordered:
+    /// Spotify's AppleScript reports a track even when paused,
+    /// so the old "Spotify first → win" rule meant a paused
+    /// Spotify hid an actively-playing YouTube tab. We now
+    /// pick the playing source across all candidates and only
+    /// fall back to a paused source if NOTHING is playing
+    /// (so the user still sees "the last thing I was
+    /// listening to" when nothing is live).
     private func publishCurrent() {
-        // Try AppleScript Spotify first — when it's playing
-        // it's almost always the user's primary source.
-        if let info = SpotifyScripter.readNowPlaying() {
+        let candidates: [LiveActivityCoordinator.MediaInfo] = [
+            SpotifyScripter.readNowPlaying(),
+            MusicScripter.readNowPlaying(),
+            BrowserMediaScripter.readNowPlaying(),
+        ].compactMap { $0 }
+        if let playing = candidates.first(
+            where: { $0.isPlaying }
+        ) {
             NowPlayingDebugLog.append(
-                "\(Date()) Spotify: \(info.title) — \(info.artist ?? "?") play=\(info.isPlaying)\n")
-            inject(info)
+                "\(Date()) playing: \(playing.source) " +
+                "— \(playing.title)\n")
+            inject(playing)
             return
         }
-        // Music.app fallback.
-        if let info = MusicScripter.readNowPlaying() {
+        if let any = candidates.first {
             NowPlayingDebugLog.append(
-                "\(Date()) Music: \(info.title) — \(info.artist ?? "?") play=\(info.isPlaying)\n")
-            inject(info)
+                "\(Date()) paused: \(any.source) " +
+                "— \(any.title)\n")
+            inject(any)
             return
         }
         // MediaRemote async query — last resort, often empty

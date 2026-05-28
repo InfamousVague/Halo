@@ -368,12 +368,27 @@ struct NotchView: View {
     /// Unknown sources fall back to the generic music pink.
     private static func mediaSourceColor(_ source: String) -> Color {
         switch source {
-        case "Spotify":
+        case "Spotify", "Spotify Web":
             // Spotify green (#1DB954).
             return Color(red: 0.11, green: 0.73, blue: 0.33)
         case "Music":
             // Apple Music red (#FA243C).
             return Color(red: 0.98, green: 0.14, blue: 0.24)
+        case "YouTube", "YouTube Music":
+            // YouTube red (#FF0000).
+            return Color(red: 1.00, green: 0.00, blue: 0.00)
+        case "SoundCloud":
+            // SoundCloud orange (#FF5500).
+            return Color(red: 1.00, green: 0.33, blue: 0.00)
+        case "Bandcamp":
+            // Bandcamp cyan (#1DA0C3).
+            return Color(red: 0.11, green: 0.63, blue: 0.76)
+        case "Twitch":
+            // Twitch purple (#9146FF).
+            return Color(red: 0.57, green: 0.27, blue: 1.00)
+        case "Vimeo":
+            // Vimeo cyan (#1AB7EA).
+            return Color(red: 0.10, green: 0.72, blue: 0.92)
         case "MediaRemote":
             // Generic media bridge — we don't know who's
             // playing. Use the original neutral music pink so
