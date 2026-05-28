@@ -18,6 +18,22 @@ final class NotchHost: NSObject {
     /// Drives hover-to-expand. Updated by the global mouse
     /// monitor; observed by `NotchHostRoot` via @Bindable.
     let hover = HoverTracker()
+    /// Right-edge slide-in settings panel. Lazy-built on first
+    /// open so we don't materialise its NSPanel until the user
+    /// actually asks for settings (either via the in-island
+    /// gear button, the island's right-click context menu, or
+    /// the distributed-notification trigger from the launcher).
+    private lazy var settingsDrawer = SettingsDrawer(
+        notchHost: self)
+
+    /// Open the slide-in settings drawer. Toggles if already
+    /// visible. Routed from: NotchView's gear button,
+    /// NotchView's right-click context menu, and the
+    /// `com.mattssoftware.halo.openSettings` distributed
+    /// notification posted by the MattsSoftware launcher.
+    func openSettings() {
+        settingsDrawer.toggle()
+    }
 
     private var panel: NSPanel?
     private var hostingController: NSHostingController<NotchHostRoot>?
@@ -199,7 +215,10 @@ final class NotchHost: NSObject {
         let root = NotchHostRoot(
             coordinator: coordinator,
             layout: layout,
-            hover: hover)
+            hover: hover,
+            onOpenSettings: { [weak self] in
+                self?.openSettings()
+            })
 
         if let hc = hostingController {
             hc.rootView = root
@@ -207,7 +226,9 @@ final class NotchHost: NSObject {
             let hc = NSHostingController(rootView: root)
             hc.view.wantsLayer = true
             hc.view.layer?.backgroundColor = NSColor.clear.cgColor
-            hc.view.autoresizingMask = [.width, .height]
+            hc.view.autoresizingMask =
+                [NSView.AutoresizingMask.width,
+                 NSView.AutoresizingMask.height]
             hostingController = hc
             panel?.contentViewController = hc
         }
@@ -316,6 +337,9 @@ struct NotchHostRoot: View {
     @Bindable var coordinator: LiveActivityCoordinator
     let layout: NotchLayout
     @Bindable var hover: HoverTracker
+    /// Callback the in-island gear button + right-click
+    /// context menu fire to open the settings drawer.
+    let onOpenSettings: () -> Void
 
     var body: some View {
         NotchView(
@@ -324,7 +348,9 @@ struct NotchHostRoot: View {
             cycleSlot: coordinator.cycleIndex,
             layout: layout,
             isExpanded: hover.isExpanded,
-            onTap: { coordinator.advanceCycleManually() })
+            isHovered: hover.isHovered,
+            onTap: { coordinator.advanceCycleManually() },
+            onOpenSettings: onOpenSettings)
             // Freeze the slot while the cursor is over the
             // island. The coordinator tears down the ambient
             // rotation timer for the duration and re-arms it

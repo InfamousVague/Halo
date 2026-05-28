@@ -34,11 +34,20 @@ struct NotchView: View {
     /// True once hover has held the island for ~1s. Drives
     /// the downward-expanded card layout.
     var isExpanded: Bool = false
+    /// True the moment the cursor enters the island bounds
+    /// (no debounce). Drives the gear button's fade-in so the
+    /// settings affordance is reachable before the heavier
+    /// expanded card has finished materialising.
+    var isHovered: Bool = false
     /// Click-the-pill handler. `NotchHost` flips the panel's
     /// `ignoresMouseEvents` only when the cursor is inside the
     /// island so this tap only ever fires from a click ON the
     /// pill itself.
     var onTap: () -> Void = {}
+    /// Open the slide-in settings drawer. Wired to the gear
+    /// button rendered on hover and the right-click context
+    /// menu's "Settings…" item.
+    var onOpenSettings: () -> Void = {}
 
     /// Start of the visible trim window along the accent
     /// path. 0 = at the bottom-centre of the pill; 1 = at the
@@ -279,11 +288,73 @@ struct NotchView: View {
             }
             .frame(width: totalWidth, height: totalHeight,
                    alignment: .top)
+
+            // Settings cog — fades in as soon as the cursor
+            // enters the island. Sits in the pill's top-right
+            // corner, inboard of the concave punch-out, so it
+            // never collides with the curved edge or the
+            // notch cutout. Has its own button so the click
+            // doesn't bubble up to the island's onTap (which
+            // would cycle the activity slot instead).
+            settingsCog(
+                totalWidth: totalWidth,
+                compactRowHeight: compactRowHeight)
+                .opacity(isHovered ? 1 : 0)
+                .animation(
+                    .easeOut(duration: 0.18),
+                    value: isHovered)
         }
         .frame(width: totalWidth, height: totalHeight)
         .position(x: centerX, y: totalHeight / 2)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
+        .contextMenu {
+            Button {
+                onOpenSettings()
+            } label: {
+                Label("Settings…",
+                      systemImage: "gearshape")
+            }
+            Divider()
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Label("Quit Halo",
+                      systemImage: "power")
+            }
+        }
+    }
+
+    /// Small gear button rendered in the pill's top-right
+    /// corner whenever the cursor is over the island.
+    /// `buttonStyle(.plain)` + `contentShape(Rectangle())`
+    /// ensure the inner click hits this and DOESN'T bubble
+    /// to the outer `.onTapGesture` that drives slot cycling.
+    @ViewBuilder
+    private func settingsCog(
+        totalWidth: CGFloat,
+        compactRowHeight: CGFloat
+    ) -> some View {
+        Button(action: onOpenSettings) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 10,
+                              weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 18, height: 18)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(0.08)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Halo Settings")
+        // Anchor at the pill's top-right, inset just enough
+        // to clear the concave punch-out corner. Same offset
+        // we use for screen accent geometry so the cog reads
+        // as part of the pill's content frame.
+        .position(
+            x: totalWidth - punchRadius - 12,
+            y: compactRowHeight / 2 + 1)
     }
 
     /// Kick off the screen-top accent: trace grows from 0 to
@@ -445,6 +516,33 @@ struct NotchView: View {
     private static let gitBrandColor = Color(
         red: 0.945, green: 0.314, blue: 0.184)
 
+    /// Composited YouTube logo — red rounded rectangle with a
+    /// white play triangle on top. The single SF Symbol
+    /// `play.rectangle.fill` template-tints into a solid red
+    /// square (everything inside the rect becomes the same
+    /// colour as the fill), so the triangle has to be a
+    /// separate layer. Same aspect / proportions as the
+    /// official YouTube favicon — wider than tall.
+    static var youTubeLogo: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4,
+                             style: .continuous)
+                .fill(Color(red: 1.0,
+                            green: 0.0,
+                            blue: 0.0))
+            Image(systemName: "play.fill")
+                .font(.system(size: 8,
+                              weight: .black))
+                .foregroundStyle(.white)
+                // Optical centring — a right-pointing
+                // triangle's geometric centre sits left of
+                // its visual centre of mass, so we nudge it
+                // half a point to the right.
+                .offset(x: 0.5, y: 0)
+        }
+        .frame(width: 22, height: 16)
+    }
+
     private static func brandColor(forID id: String) -> Color? {
         switch id {
         // System HUDs match the system bezel's monochrome
@@ -475,7 +573,30 @@ struct NotchView: View {
     private func leadingContent(
         for a: LiveActivityCoordinator.Resolved
     ) -> some View {
-        if let artwork = a.media?.artwork {
+        if a.id == "halo.nowplaying",
+           let media = a.media,
+           (media.source == "YouTube"
+            || media.source == "YouTube Music"),
+           !media.title.isEmpty {
+            // YouTube always uses the red logo on the
+            // compact pill, even after the thumbnail loads.
+            // An 18pt thumbnail is too small to read — the
+            // logo + title pair is the clearer cue. The
+            // thumbnail surfaces in the expanded card where
+            // it has room to render at full size.
+            HStack(spacing: 6) {
+                Self.youTubeLogo
+                MarqueeText(
+                    text: media.title,
+                    font: .system(size: 13,
+                                  weight: .medium),
+                    fontSize: 13,
+                    color: .white,
+                    maxWidth: 120)
+            }
+            .id("lead-yt-\(media.title)")
+            .transition(.opacity)
+        } else if let artwork = a.media?.artwork {
             // Album cover + song title side by side. The
             // cover stays the same small rounded thumbnail
             // (reads like a Spotify / Music card); the title
@@ -509,6 +630,43 @@ struct NotchView: View {
                 }
             }
             .id("lead-art-\(a.media?.title ?? "")")
+            .transition(.opacity)
+        } else if a.id == "halo.nowplaying",
+                  let media = a.media,
+                  media.artwork == nil,
+                  !media.title.isEmpty,
+                  NowPlayingPublisher.titleRendersOnLeading(
+                    media),
+                  let img = a.compactLeadingImage {
+            // Source-icon-without-artwork pattern (YouTube,
+            // SoundCloud, Bandcamp, Twitch, Vimeo, Spotify
+            // Web): brand source icon on the left next to the
+            // track title. YouTube renders a composited red
+            // play-rectangle (a single tinted SF Symbol just
+            // becomes a solid red square; the white play
+            // triangle has to be a separate layer on top of
+            // the red rectangle).
+            HStack(spacing: 6) {
+                if media.source == "YouTube"
+                   || media.source == "YouTube Music" {
+                    Self.youTubeLogo
+                } else {
+                    Image(nsImage: tintImage(
+                        img,
+                        color: Self.pillIconColor(for: a)))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                }
+                MarqueeText(
+                    text: media.title,
+                    font: .system(size: 13,
+                                  weight: .medium),
+                    fontSize: 13,
+                    color: .white,
+                    maxWidth: 120)
+            }
+            .id("lead-srcmedia-\(media.source)-\(media.title)")
             .transition(.opacity)
         } else if a.id == "worktree",
                   let info = a.worktree,
@@ -610,11 +768,38 @@ struct NotchView: View {
                                       weight: .semibold))
                         .foregroundStyle(baseColor)
                 }
-                Self.dimmedUnitsText(text, baseColor: baseColor)
+                // Plain `Text(text)` — not the per-character
+                // dimmedUnitsText. SwiftUI's
+                // `.contentTransition(.numericText())` slot-
+                // machine roll only fires on a single coherent
+                // Text identity; the previous AttributedString
+                // approach (and its predecessor concatenated
+                // `Text + Text + …`) both fragmented the
+                // identity enough that SwiftUI fell back to
+                // a crossfade. We trade per-character leading-
+                // zero / unit dimming for the rolling
+                // animation here — the digit roll is the
+                // visual cue the pill is live.
+                Text(text)
                     .font(.system(size: 13))
+                    .foregroundStyle(baseColor)
+                    // Monospaced numerals so a `5` and an
+                    // `8` occupy the same horizontal slot —
+                    // the roll lines up cleanly and the pill
+                    // never reshapes a hair as digits tick.
+                    .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
                     .contentTransition(.numericText())
+                    // Drive the digit-by-digit roll on a
+                    // linear clock; the parent ZStack's
+                    // spring animation otherwise carries the
+                    // text change and overrides the
+                    // contentTransition's frame budget,
+                    // collapsing it to a crossfade.
+                    .animation(
+                        .linear(duration: 0.35),
+                        value: text)
             }
             .id("trail-text-\(a.id)")
         } else if let img = a.compactTrailingImage {
@@ -654,7 +839,17 @@ struct NotchView: View {
         _ s: String,
         baseColor: Color = .white
     ) -> Text {
-        var result = Text("")
+        // Builds the result as a single `AttributedString`
+        // with per-character `foregroundColor` attributes,
+        // not as a chain of `Text + Text + …` concatenations.
+        // SwiftUI's `.contentTransition(.numericText())` only
+        // does the slot-machine roll when the value is ONE
+        // coherent Text — a chain of per-character Text runs
+        // gets treated as several independent transition
+        // units and falls back to crossfade, losing the
+        // digit-by-digit ticker effect. AttributedString
+        // preserves a single identity so the roll animation
+        // fires across the whole string.
         let chars = Array(s)
         // Detect "this is a numeric label" — a digit
         // immediately followed by `:` or `%` somewhere in the
@@ -699,6 +894,7 @@ struct NotchView: View {
             }
             return indices
         }()
+        var attr = AttributedString()
         for i in 0..<chars.count {
             let ch = chars[i]
             let opacity: Double = {
@@ -733,11 +929,12 @@ struct NotchView: View {
                 }
                 return 1.0
             }()
-            let piece = Text(String(ch))
-                .foregroundStyle(baseColor.opacity(opacity))
-            result = result + piece
+            var charAttr = AttributedString(String(ch))
+            charAttr.foregroundColor =
+                baseColor.opacity(opacity)
+            attr.append(charAttr)
         }
-        return result
+        return Text(attr)
     }
 
     /// Paint a template NSImage with the activity's tint.
@@ -808,6 +1005,24 @@ enum Geometry {
         for a: LiveActivityCoordinator.Resolved?
     ) -> CGFloat {
         guard let a else { return 0 }
+        // Now-playing sources without artwork render the
+        // brand-tinted source icon next to the track title
+        // on the leading wing (same shape as Spotify's
+        // artwork-with-title, just with a logo standing in
+        // for the thumbnail). YouTube's logo is 22pt wide
+        // (the proper aspect ratio of the play-rectangle
+        // mark) — everyone else stays at the standard 18pt.
+        if a.id == "halo.nowplaying",
+           let media = a.media,
+           media.artwork == nil,
+           !media.title.isEmpty,
+           NowPlayingPublisher.titleRendersOnLeading(media) {
+            let iconW: CGFloat =
+                (media.source == "YouTube"
+                 || media.source == "YouTube Music")
+                ? 22 : 18
+            return iconW + 6 + 120
+        }
         if a.id == "worktree", let info = a.worktree {
             // Git icon + project name (capped at 140pt so a
             // huge folder name doesn't push the trailing

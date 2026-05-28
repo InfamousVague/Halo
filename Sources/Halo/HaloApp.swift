@@ -53,21 +53,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // launcher posts this distributed notification when the
         // user clicks the Halo settings entry. We listen on the
         // system-wide center so the launcher (a separate
-        // process) reaches us without a URL scheme or XPC.
+        // process) reaches us without a URL scheme or XPC. Now
+        // routes through the slide-in drawer instead of the
+        // legacy NSWindow so the launcher and the in-island
+        // affordances open the same surface.
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(
                 "com.mattssoftware.halo.openSettings"),
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.openSettings() }
+            Task { @MainActor in self?.notchHost.openSettings() }
         }
     }
 
-    /// Show the settings window. Called from the MenuBarExtra
-    /// "Show Settings…" menu item. Uses a real NSWindow so the
-    /// toggle reliably accepts input (NSPopover from a SwiftUI
-    /// menu bar item has activation quirks on macOS 14+).
+    /// Show the legacy NSWindow settings sheet. Kept as a
+    /// fallback the test harness can still call directly,
+    /// but the user-facing entry point is now
+    /// `notchHost.openSettings()` (the slide-in drawer).
     func openSettings() {
         if let w = settingsWindow {
             w.makeKeyAndOrderFront(nil)
