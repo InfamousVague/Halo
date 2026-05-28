@@ -2,26 +2,38 @@ import AppKit
 import SwiftUI
 
 /// Slide-in settings drawer pinned to the screen's right edge.
-/// Mirrors the island's visual language — OLED black surface,
-/// thin specular accent down the leading edge, soft inner glow,
-/// dim eyebrows over bright primary text. Drops out the legacy
-/// `NSWindow + TabView` settings sheet in favour of something
-/// that reads as part of the island, not part of System
-/// Settings.
+/// Shaped like a vertical sibling of the notch — concave wedge
+/// at the top-left where it meets the screen interior + rounded
+/// bottom corners + a flush top + right against the screen
+/// edges. OLED-pure-black surface, no borders, no edge glow:
+/// the shape and the layered content sell it without
+/// outlines.
+///
+/// Sized as a card (440×720, capped to screen height − inset)
+/// rather than a full-screen pane — feels transient and
+/// scoped, which matches how settings are typically a
+/// glance-and-go interaction rather than a long session.
 ///
 /// Lifecycle: `show()` creates the panel just off-screen at
-/// `screen.maxX` and animates it leftward to `maxX - width`.
-/// `hide()` reverses. The drawer is borderless / non-activating
-/// so opening it doesn't steal focus from whatever the user was
-/// just doing (a key consideration for a quick-access settings
-/// drawer that needs to feel transient).
+/// `screen.maxX` and animates it leftward to its docked
+/// position; `hide()` reverses. Borderless,
+/// non-activating so the app focus stays on whatever the user
+/// was just doing.
 @MainActor
 final class SettingsDrawer {
-    /// Pixel width of the drawer when fully open. Calibrated to
-    /// fit two columns of feature toggles with comfortable
-    /// breathing room — narrower than a Settings.app pane,
-    /// wider than a popover.
-    private let width: CGFloat = 380
+    /// Pixel width of the drawer when fully open. Sized to
+    /// hold the 150pt sidebar + ~260pt content column with
+    /// comfortable padding — a card, not a pane.
+    private let width: CGFloat = 440
+    /// Maximum height; clamped to screen so it never extends
+    /// past the visible area on a 13" laptop screen.
+    private let maxHeight: CGFloat = 720
+    /// Gap between the drawer and the screen edges (top, right,
+    /// bottom). The right inset is 0 — the drawer sits flush
+    /// against the right screen edge, mirroring the way the
+    /// notch sits flush against the top edge.
+    private let topInset: CGFloat = 0
+    private let bottomInset: CGFloat = 24
 
     private var panel: NSPanel?
     private weak var notchHost: NotchHost?
@@ -46,18 +58,14 @@ final class SettingsDrawer {
         if isOpen { return }
         guard let screen = NSScreen.main else { return }
 
-        // Match the screen we're docked on so the slide-in
-        // lands at the right physical edge regardless of
-        // which display has the menu bar. Inset 24pt off the
-        // top + bottom so the drawer floats inside the
-        // screen frame instead of meeting the very corners.
-        let topInset: CGFloat = 24
-        let bottomInset: CGFloat = 24
-        let h = screen.frame.height
-            - topInset - bottomInset
+        let h = min(
+            maxHeight,
+            screen.frame.height - topInset - bottomInset)
         let onX = screen.frame.maxX - width
         let offX = screen.frame.maxX
-        let y = screen.frame.minY + bottomInset
+        // Anchor at the very top of the screen, so the drawer
+        // visually hangs from the top edge like the notch does.
+        let y = screen.frame.maxY - h - topInset
 
         let p = SettingsDrawerPanel(
             contentRect: NSRect(
@@ -68,7 +76,12 @@ final class SettingsDrawer {
             defer: false)
         p.isFloatingPanel = true
         p.level = .popUpMenu
-        p.hasShadow = true
+        // Transparent panel chrome — the SwiftUI DrawerShape
+        // does ALL of the visible shape, including the
+        // notch-style concave wedge. AppKit drawing a rounded
+        // rectangle for us would clip the wedge and the
+        // illusion would collapse.
+        p.hasShadow = false
         p.backgroundColor = .clear
         p.isOpaque = false
         p.hidesOnDeactivate = false
@@ -78,15 +91,6 @@ final class SettingsDrawer {
             .fullScreenAuxiliary,
         ]
         p.isReleasedWhenClosed = false
-        // Round the visible corners — straight where it meets
-        // the screen edge, rounded on the inside-facing side.
-        p.contentView?.wantsLayer = true
-        p.contentView?.layer?.cornerRadius = 14
-        p.contentView?.layer?.maskedCorners = [
-            .layerMinXMinYCorner,
-            .layerMinXMaxYCorner,
-        ]
-        p.contentView?.layer?.masksToBounds = true
 
         let root = SettingsDrawerView(
             bindings: SettingsBindings(
@@ -148,8 +152,7 @@ final class SettingsDrawer {
             Task { @MainActor in self?.hide() }
         }
         // Local monitor — Escape dismisses while the drawer is
-        // focused. Returning nil swallows the event so it
-        // doesn't propagate to whatever the focused control was.
+        // focused.
         keyMonitor = NSEvent.addLocalMonitorForEvents(
             matching: .keyDown
         ) { [weak self] event in
@@ -175,13 +178,104 @@ final class SettingsDrawer {
 
 /// NSPanel subclass that opts INTO becoming key — borderless
 /// panels normally refuse, which would block keyboard input
-/// for the toggles and text fields inside the drawer. Returning
-/// `true` for both `canBecomeKey` and `canBecomeMain` keeps the
-/// drawer responsive without re-activating the host app
-/// (`.nonactivatingPanel` still suppresses the focus steal).
+/// for the toggles and text fields inside the drawer.
+/// `.nonactivatingPanel` still suppresses focus-steal on the
+/// host app.
 private final class SettingsDrawerPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+// MARK: - DrawerShape
+
+/// Notch-sibling outline for the settings panel. The drawer
+/// hangs from the screen's top-right corner the way the
+/// island hangs from the top-centre: flush top + right edges
+/// (against the screen), a concave wedge at the top-left
+/// where the panel meets the screen interior (matching the
+/// island's wing concaves), rounded bottom-left + bottom-right
+/// corners (matching the island's `bottomCornerRadius`).
+///
+/// Trace order is counter-clockwise from the top-left wedge
+/// start so the winding matches `IslandShape`. SwiftUI's
+/// `clockwise:` flag uses math-y-up convention internally, so
+/// counter-clockwise-on-screen reads as `clockwise: false`
+/// here (see `IslandShape` for the same parity).
+private struct DrawerShape: Shape {
+    /// Concave-wedge radius at the top-left corner. Matches
+    /// `Geometry.punchRadius` so the wedge reads as a sibling
+    /// of the notch's own wings.
+    var topLeftConcaveRadius: CGFloat = 14
+    /// Convex-corner radius at the bottom-left and
+    /// bottom-right. Larger than the wedge so the drawer feels
+    /// solid where it isn't against a screen edge.
+    var bottomCornerRadius: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        let cr = topLeftConcaveRadius
+        let br = min(bottomCornerRadius, h / 2)
+
+        var p = Path()
+
+        // Start at the top edge where the concave wedge begins,
+        // tracing counter-clockwise.
+        p.move(to: CGPoint(x: cr, y: 0))
+
+        // Concave wedge at top-left. Masking circle centred at
+        // the corner (0, 0); arc bulges INTO the drawer
+        // between (cr, 0) on the top edge and (0, cr) on the
+        // left edge. The arc passes through (~0.71cr, ~0.71cr)
+        // — inside the drawer — so the outline recesses at
+        // the corner.
+        p.addArc(
+            center: CGPoint(x: 0, y: 0),
+            radius: cr,
+            startAngle: .degrees(0),     // (cr, 0)
+            endAngle: .degrees(90),      // (0, cr)
+            clockwise: false)            // through 45°
+
+        // Left edge straight down to the bottom-left rounded
+        // corner.
+        p.addLine(to: CGPoint(x: 0, y: h - br))
+
+        // Bottom-left convex rounded corner — same direction
+        // as `IslandShape`'s bottom-left wedge, so the visual
+        // weight is consistent.
+        p.addArc(
+            center: CGPoint(x: br, y: h - br),
+            radius: br,
+            startAngle: .degrees(180),   // (0, h - br)
+            endAngle: .degrees(90),      // (br, h)
+            clockwise: true)             // through 135°
+
+        // Bottom edge.
+        p.addLine(to: CGPoint(x: w - br, y: h))
+
+        // Bottom-right convex rounded corner. Same radius as
+        // the bottom-left so the drawer feels balanced even
+        // though only one of these meets the screen edge.
+        p.addArc(
+            center: CGPoint(x: w - br, y: h - br),
+            radius: br,
+            startAngle: .degrees(90),    // (w - br, h)
+            endAngle: .degrees(0),       // (w, h - br)
+            clockwise: true)             // through 45°
+
+        // Right edge straight up to the top-right corner.
+        // Sharp corner here — the drawer sits flush against
+        // the screen's right edge, so any rounding would be
+        // clipped (and would look odd against the menu bar
+        // band above).
+        p.addLine(to: CGPoint(x: w, y: 0))
+
+        // Top edge back to the wedge start.
+        p.addLine(to: CGPoint(x: cr, y: 0))
+
+        p.closeSubpath()
+        return p
+    }
 }
 
 // MARK: - Bindings
@@ -189,8 +283,6 @@ private final class SettingsDrawerPanel: NSPanel {
 /// Bundles every UserDefaults toggle the drawer mutates into
 /// one observable object so the SwiftUI view can read / write
 /// without each row needing its own custom Binding factory.
-/// Mirrors the legacy SettingsView's plumbing but as a typed
-/// observable instead of seven separate `@Binding<Bool>` args.
 @MainActor
 @Observable
 final class SettingsBindings {
@@ -208,7 +300,16 @@ final class SettingsBindings {
             else { notchHost?.disable() }
         }
     }
-
+    var symmetry: Bool {
+        get { HaloSettings.symmetryEnabled }
+        set {
+            HaloSettings.setSymmetryEnabled(newValue)
+            // Symmetry affects the island's frame math — poke
+            // the coordinator so SwiftUI re-runs `islandFrame`
+            // and the pill resizes on the next tick.
+            notchHost?.coordinator.refreshNow()
+        }
+    }
     var volume: Bool {
         get { HaloSettings.volumeHUDEnabled }
         set {
@@ -298,271 +399,259 @@ final class SettingsBindings {
 
 // MARK: - View
 
-/// SwiftUI root of the drawer. OLED-black surface, a thin
-/// glowing trace down the leading edge that picks up the same
-/// design language as the island's screen-top accent, and
-/// section blocks that mirror the expanded-card visual
-/// hierarchy (dim eyebrows, bright primary text, faint surface
-/// tiles for rows).
+/// Settings drawer content, modelled after Libre.academy's
+/// sidebar + content layout (which mirrors the Base UI
+/// `NavSidebar` primitive at narrower dimensions).
+///
+/// Two columns: a 150pt nav rail on the left listing the
+/// sections, an article-style content column on the right
+/// with eyebrow + title + scrollable body. Pure-monochrome
+/// styling — selected nav items get a soft 6%-white fill and
+/// a weight bump, nothing accent-coloured. Hairline dividers
+/// only where a `Divider` is structurally necessary (under
+/// the article header). No panel outline.
 private struct SettingsDrawerView: View {
     @State var bindings: SettingsBindings
     let onClose: () -> Void
 
+    @State private var selection: SettingsSection = .general
+
     var body: some View {
-        ZStack(alignment: .leading) {
-            // Base OLED layer — pure black for proper contrast
-            // with the white-on-black design system, and so the
-            // pixel switch-off on OLED displays really kicks in.
-            Color.black
-                .ignoresSafeArea()
+        ZStack {
+            // OLED black, masked to the notch-sibling shape so
+            // the panel reads as a single shaped surface, not a
+            // rectangle with rounded corners. The drawer's
+            // NSPanel itself is transparent — this is the only
+            // visible chrome.
+            DrawerShape()
+                .fill(Color.black)
 
-            // Soft inner glow on the leading edge. Reads as a
-            // gentle highlight where the drawer meets the
-            // screen interior — same trick the island's
-            // bottom-corner radius does at a smaller scale.
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0.06),
-                    Color.white.opacity(0.0),
-                ],
-                startPoint: .leading,
-                endPoint: .center
-            )
-            .frame(width: 60)
-            .blendMode(.plusLighter)
-            .allowsHitTesting(false)
-
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider()
-                    .overlay(Color.white.opacity(0.08))
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading,
-                           spacing: 22) {
-                        generalSection
-                        systemHUDsSection
-                        liveSection
-                        suiteSection
-                        aboutSection
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 18)
-                }
+            HStack(spacing: 0) {
+                sidebar
+                contentColumn
             }
+            // Pad in from the shape's edges. The concave
+            // top-left wedge means content needs more leading
+            // padding at the top — 18pt clears the curve at
+            // any reasonable cr value (14).
+            .padding(.top, 18)
+            .padding(.bottom, 22)
+            .padding(.leading, 18)
+            .padding(.trailing, 18)
         }
-        .overlay(alignment: .leading) {
-            // 1pt glowing trace down the leading edge.
-            // Two layers — a sharp inner stroke for the
-            // hairline and a softer outer shadow for the
-            // bloom. Matches the screen-top accent's stroke
-            // weight so the drawer reads as continuous with
-            // the island visual language.
-            Rectangle()
-                .fill(LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.08),
-                        Color(red: 0.55, green: 0.65,
-                              blue: 1.0).opacity(0.55),
-                        Color.white.opacity(0.08),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom))
-                .frame(width: 1)
-                .shadow(color: Color(red: 0.55,
-                                     green: 0.65,
-                                     blue: 1.0)
-                                    .opacity(0.45),
-                        radius: 6, x: 2, y: 0)
-                .allowsHitTesting(false)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity,
-               alignment: .leading)
+        .clipShape(DrawerShape())
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .strokeBorder(LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.4),
-                            Color.white.opacity(0.05),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing),
-                                  lineWidth: 1)
-                    .frame(width: 22, height: 22)
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 11,
-                                  weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
+    // MARK: Sidebar (nav rail)
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sidebarHeader
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(SettingsSection.allCases) { sec in
+                    SidebarItem(
+                        section: sec,
+                        isSelected: selection == sec,
+                        onTap: { selection = sec })
+                }
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Text("HALO")
+            Spacer()
+            sidebarFooter
+        }
+        .frame(width: 150, alignment: .leading)
+    }
+
+    private var sidebarHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 11,
+                              weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+            Text("HALO")
+                .font(.system(size: 11,
+                              weight: .bold))
+                .tracking(2)
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+        .padding(.bottom, 2)
+    }
+
+    private var sidebarFooter: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+                .overlay(Color.white.opacity(0.08))
+                .padding(.horizontal, 4)
+            HStack(spacing: 6) {
+                Text("v\(appVersion)")
                     .font(.system(size: 10,
-                                  weight: .semibold))
-                    .tracking(2)
-                    .foregroundStyle(.white.opacity(0.55))
-                Text("Settings")
-                    .font(.system(size: 17,
-                                  weight: .semibold))
+                                  weight: .medium,
+                                  design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+                Spacer()
+                Button(action: { NSApp.terminate(nil) }) {
+                    Text("Quit")
+                        .font(.system(size: 10,
+                                      weight: .semibold))
+                        .tracking(0.5)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+                .help("Quit Halo")
+            }
+            .padding(.horizontal, 4)
+        }
+    }
+
+    // MARK: Content column
+
+    private var contentColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            contentHeader
+            Divider()
+                .overlay(Color.white.opacity(0.08))
+                .padding(.vertical, 14)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionContent
+                }
+                .padding(.bottom, 12)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 18)
+    }
+
+    private var contentHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(selection.eyebrow)
+                    .font(.system(size: 10,
+                                  weight: .bold))
+                    .tracking(1.5)
+                    .foregroundStyle(.white.opacity(0.45))
+                Text(selection.title)
+                    .font(.system(size: 22,
+                                  weight: .bold))
+                    .tracking(-0.4)
                     .foregroundStyle(.white)
             }
             Spacer()
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10,
+                    .font(.system(size: 9,
                                   weight: .bold))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 22, height: 22)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(width: 20, height: 20)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(0.08)))
+                            .fill(Color.white.opacity(0.06)))
             }
             .buttonStyle(.plain)
-            .help("Close")
+            .help("Close (Esc)")
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
     }
 
-    // MARK: Sections
-
-    private var generalSection: some View {
-        Section(eyebrow: "GENERAL") {
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch selection {
+        case .general:
             DrawerToggle(
                 title: "Show the island",
-                subtitle: "When off, every publisher stops listening too.",
+                subtitle: "When off, every publisher stops listening.",
                 symbol: "circle.dashed",
                 isOn: $bindings.enabled)
-        }
-    }
-
-    private var systemHUDsSection: some View {
-        Section(eyebrow: "SYSTEM HUDS") {
             DrawerToggle(
-                title: "Volume",
-                subtitle: "Show level on every change",
+                title: "Symmetry mode",
+                subtitle: "Match both wings to the wider side so the pill stays visually centred.",
+                symbol: "rectangle.split.2x1",
+                isOn: $bindings.symmetry)
+        case .system:
+            DrawerToggle(
+                title: "Volume HUD",
+                subtitle: "Show level on every change.",
                 symbol: "speaker.wave.2.fill",
                 isOn: $bindings.volume)
             DrawerToggle(
-                title: "Brightness",
-                subtitle: "Show level on every change",
+                title: "Brightness HUD",
+                subtitle: "Show level on every change.",
                 symbol: "sun.max.fill",
                 isOn: $bindings.brightness)
             DrawerToggle(
                 title: "Battery",
-                subtitle: "Low / charging / full state",
+                subtitle: "Low / charging / full state.",
                 symbol: "battery.100",
                 isOn: $bindings.battery)
-        }
-    }
-
-    private var liveSection: some View {
-        Section(eyebrow: "LIVE") {
+            DrawerToggle(
+                title: "System stats",
+                subtitle: "CPU / RAM / Disk rotation.",
+                symbol: "cpu",
+                isOn: $bindings.stats)
+        case .live:
             DrawerToggle(
                 title: "Now Playing",
-                subtitle: "Track from any media app",
+                subtitle: "Track info from any media app.",
                 symbol: "music.note",
                 isOn: $bindings.nowPlaying)
             DrawerToggle(
                 title: "AirPods",
-                subtitle: "Per-bud battery + charging",
+                subtitle: "Per-bud battery + charging.",
                 symbol: "airpods",
                 isOn: $bindings.airpods)
             DrawerToggle(
                 title: "Bluetooth audio",
-                subtitle: "Speakers + headphones detail",
+                subtitle: "Speakers + headphones detail.",
                 symbol: "hifispeaker.fill",
                 isOn: $bindings.bluetoothAudio)
             DrawerToggle(
-                title: "Stats",
-                subtitle: "CPU / RAM / Disk rotation",
-                symbol: "cpu",
-                isOn: $bindings.stats)
-            DrawerToggle(
                 title: "VPN",
-                subtitle: "Connection + tunnel state",
+                subtitle: "Connection + tunnel state.",
                 symbol: "lock.shield.fill",
                 isOn: $bindings.vpn)
             DrawerToggle(
                 title: "Calendar",
-                subtitle: "Countdown to next event",
+                subtitle: "Countdown to next event.",
                 symbol: "calendar",
                 isOn: $bindings.calendar)
             DrawerToggle(
                 title: "GitHub",
-                subtitle: "Open PR notifications",
+                subtitle: "Open PR notifications.",
                 symbol: "arrow.triangle.pull",
                 isOn: $bindings.github)
             DrawerToggle(
                 title: "Docker",
-                subtitle: "Running container count",
+                subtitle: "Running container count.",
                 symbol: "shippingbox.fill",
                 isOn: $bindings.docker)
-        }
-    }
-
-    private var suiteSection: some View {
-        Section(eyebrow: "MATTSSOFTWARE APPS") {
+        case .suite:
             ForEach(HaloSettings.suiteSlots) { slot in
                 SuiteToggle(slot: slot,
                             bindings: bindings)
             }
+        case .about:
+            aboutContent
         }
     }
 
-    private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("ABOUT")
-                .font(.system(size: 10,
-                              weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.bottom, 4)
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Halo")
-                        .font(.system(size: 13,
-                                      weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text("v\(appVersion)")
-                        .font(.system(size: 11,
-                                      design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
-                }
-                Spacer()
-                Button("Quit Halo") {
-                    NSApp.terminate(nil)
-                }
-                .buttonStyle(.plain)
+    private var aboutContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Halo")
+                .font(.system(size: 28,
+                              weight: .black))
+                .foregroundStyle(.white)
+            Text("Version \(appVersion)")
                 .font(.system(size: 11,
-                              weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(Color.white.opacity(0.08)))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.12),
-                                lineWidth: 0.5))
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8,
-                                 style: .continuous)
-                    .fill(Color.white.opacity(0.04))
-                    .overlay(
-                        RoundedRectangle(
-                            cornerRadius: 8,
-                            style: .continuous)
-                            .stroke(
-                                Color.white.opacity(0.08),
-                                lineWidth: 0.5)))
+                              design: .monospaced))
+                .foregroundStyle(.white.opacity(0.5))
+            Text("The MattsSoftware Dynamic Island for the MacBook notch. Publishers stream live state from suite apps + system integrations into the pill at the top of your screen.")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.75))
+                .fixedSize(horizontal: false,
+                           vertical: true)
+                .padding(.top, 4)
         }
     }
 
@@ -573,32 +662,114 @@ private struct SettingsDrawerView: View {
     }
 }
 
-// MARK: - Section / row primitives
+// MARK: - Section enum
 
-/// Eyebrow-titled block. Eyebrows are 50% white tracked-out
-/// caps so the section heading reads as label, not data.
-private struct Section<Content: View>: View {
-    let eyebrow: String
-    @ViewBuilder var content: () -> Content
+private enum SettingsSection: String,
+    Identifiable, CaseIterable
+{
+    case general
+    case system
+    case live
+    case suite
+    case about
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(eyebrow)
-                .font(.system(size: 10,
-                              weight: .semibold))
-                .tracking(1.5)
-                .foregroundStyle(.white.opacity(0.45))
-                .padding(.bottom, 2)
-            VStack(spacing: 4) {
-                content()
-            }
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .general: return "General"
+        case .system:  return "System"
+        case .live:    return "Live"
+        case .suite:   return "Suite"
+        case .about:   return "About"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .system:  return "slider.horizontal.3"
+        case .live:    return "wave.3.right"
+        case .suite:   return "square.grid.2x2"
+        case .about:   return "info.circle"
+        }
+    }
+    var eyebrow: String {
+        switch self {
+        case .general: return "OVERVIEW"
+        case .system:  return "SYSTEM HUDS"
+        case .live:    return "LIVE ACTIVITIES"
+        case .suite:   return "MATTSSOFTWARE SUITE"
+        case .about:   return "ABOUT"
+        }
+    }
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .system:  return "System"
+        case .live:    return "Live"
+        case .suite:   return "Suite apps"
+        case .about:   return "About Halo"
         }
     }
 }
 
-/// One row inside a section. Icon + title + subtitle + toggle,
-/// rendered on a faint white-on-black surface tile that matches
-/// the expanded-card row styling.
+// MARK: - Sidebar item
+
+/// Single nav-rail row. Selected = 6%-white fill + 0.98-white
+/// label at weight .semibold. Hover lifts to the same fill
+/// but keeps the .regular weight, so the selected state
+/// reads through the bump alone. No accent color, no left
+/// bar, no border — Libre.academy's monochrome treatment.
+private struct SidebarItem: View {
+    let section: SettingsSection
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var isHovered: Bool = false
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 11,
+                                  weight: isSelected
+                                    ? .semibold
+                                    : .regular))
+                    .frame(width: 14, height: 14)
+                Text(section.label)
+                    .font(.system(
+                        size: 13,
+                        weight: isSelected
+                            ? .semibold
+                            : .regular))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(
+                (isSelected || isHovered)
+                    ? .white
+                    : .white.opacity(0.71))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6,
+                                 style: .continuous)
+                    .fill(
+                        (isSelected || isHovered)
+                            ? Color.white.opacity(0.06)
+                            : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Toggle row
+
+/// Content-column toggle row. Flush against the column — no
+/// surrounding card. Title + subtitle stack on the left, an
+/// SF Symbol leading the row, switch on the right. Tracks the
+/// Libre.academy treatment: monochrome, hairline only when
+/// structurally required, weight bump for the active state.
 private struct DrawerToggle: View {
     let title: String
     let subtitle: String
@@ -607,46 +778,40 @@ private struct DrawerToggle: View {
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            HStack(spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
                 Image(systemName: symbol)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.7))
-                    .frame(width: 18, height: 18)
-                VStack(alignment: .leading, spacing: 1) {
+                    .font(.system(size: 13,
+                                  weight: .medium))
+                    .foregroundStyle(
+                        .white.opacity(isOn ? 0.85 : 0.5))
+                    .frame(width: 18, height: 18,
+                           alignment: .center)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 12,
-                                      weight: .medium))
+                        .font(.system(size: 13,
+                                      weight: .semibold))
                         .foregroundStyle(.white)
                     Text(subtitle)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(
                             .white.opacity(0.5))
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false,
+                                   vertical: true)
                 }
             }
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .tint(Color(red: 0.55, green: 0.65, blue: 1.0))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8,
-                             style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(
-                        cornerRadius: 8,
-                        style: .continuous)
-                        .stroke(Color.white.opacity(0.06),
-                                lineWidth: 0.5)))
+        .tint(.white.opacity(0.85))
+        .padding(.vertical, 6)
     }
 }
 
-/// Suite-slot variant of the toggle that reads / writes through
-/// `SettingsBindings.suiteSlotEnabled` so updates immediately
-/// poke the coordinator (otherwise the new visibility waits up
-/// to a second for the next 1Hz poll).
+/// Suite-slot variant of the toggle that reads / writes
+/// through `SettingsBindings.suiteSlotEnabled` so updates
+/// immediately poke the coordinator (otherwise the new
+/// visibility waits up to a second for the next 1Hz poll).
 private struct SuiteToggle: View {
     let slot: SuiteSlot
     let bindings: SettingsBindings

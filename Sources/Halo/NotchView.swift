@@ -1202,12 +1202,24 @@ enum Geometry {
         let notchW = layout.notchTrailingX - layout.notchLeadingX
         let leadW = leadingWidth(for: a)
         let trailW = trailingWidth(for: a)
-        let leftHalf = max(
+        var leftHalf = max(
             leadW + contentInset + notchClearance,
             sidePad)
-        let rightHalf = max(
+        var rightHalf = max(
             trailW + contentInset + notchClearance,
             sidePad)
+        // Symmetry mode — both wings sized to the wider of the
+        // two so the pill stays visually centred on the notch's
+        // hardware midpoint instead of sliding left/right as
+        // content widens on one side. Optional because the
+        // asymmetric form is more space-efficient when only one
+        // side has data (e.g. battery's trailing percentage
+        // with an empty leading wing).
+        if HaloSettings.symmetryEnabled {
+            let half = max(leftHalf, rightHalf)
+            leftHalf = half
+            rightHalf = half
+        }
         var totalWidth = leftHalf + notchW + rightHalf
         var totalHeight = layout.menuBarHeight + 1
         // When compact the pill hangs asymmetrically off the

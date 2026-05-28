@@ -16,6 +16,22 @@ enum HaloSettings {
         UserDefaults.standard.set(on, forKey: enabledKey)
     }
 
+    /// Symmetry mode — when on, the island's leading and
+    /// trailing wings are padded to the SAME width (the wider
+    /// of the two wins), so the pill stays visually centred
+    /// on the notch's hardware midpoint regardless of which
+    /// side currently has more content. Default off — the
+    /// asymmetric compact pill is the more space-efficient
+    /// layout, but some users find the size-shift jarring.
+    static var symmetryEnabled: Bool {
+        UserDefaults.standard.bool(
+            forKey: "halo.symmetry")
+    }
+    static func setSymmetryEnabled(_ on: Bool) {
+        UserDefaults.standard.set(
+            on, forKey: "halo.symmetry")
+    }
+
     // MARK: - Built-in publishers (Halo's own system integrations)
 
     static var volumeHUDEnabled: Bool {
