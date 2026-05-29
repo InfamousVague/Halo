@@ -116,6 +116,33 @@ enum HaloSettings {
     }
 
 
+    // MARK: - Extensions
+
+    /// Registered extensions. Each is a HaloPublisher (so it
+    /// plumbs through the same coordinator path the built-in
+    /// publishers use) PLUS metadata for the Settings →
+    /// Extensions list. Future extensions are added by
+    /// appending here + registering in NotchHost.
+    static let extensions: [ExtensionMeta] = [
+        .init(id: "crypto.tracker",
+              title: "Crypto Tracker",
+              subtitle: "Live coin prices via CoinGecko.",
+              symbol: "bitcoinsign.circle.fill"),
+    ]
+
+    static func extensionEnabled(_ id: String) -> Bool {
+        // Default OFF for extensions — they pull data from
+        // the network, which the user should opt into.
+        UserDefaults.standard.bool(
+            forKey: "halo.extension.\(id)")
+    }
+
+    static func setExtensionEnabled(_ id: String, _ on: Bool) {
+        UserDefaults.standard.set(
+            on, forKey: "halo.extension.\(id)")
+    }
+
+
     // MARK: - Suite apps (external publishers via the file store)
 
     /// Slot id matches the JSON filename the publisher writes
@@ -167,6 +194,18 @@ enum HaloSettings {
 /// used by the Settings UI to render the toggle row and by the
 /// coordinator to know which slot ids to filter against.
 struct SuiteSlot: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let symbol: String
+}
+
+/// Metadata for one extension. Same shape as `SuiteSlot` but
+/// kept separate so the two surfaces (built-in extensions
+/// vs. external suite apps) can diverge later — extensions
+/// will eventually grow per-extension configuration sheets,
+/// API-key fields, coin-selection pickers, etc.
+struct ExtensionMeta: Identifiable, Hashable {
     let id: String
     let title: String
     let subtitle: String

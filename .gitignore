@@ -8,3 +8,4 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 notarization-*.log
+.dev/

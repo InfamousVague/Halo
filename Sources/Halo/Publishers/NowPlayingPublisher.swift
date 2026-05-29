@@ -176,23 +176,46 @@ final class NowPlayingPublisher: HaloPublisher {
     private func inject(
         _ media: LiveActivityCoordinator.MediaInfo
     ) {
-        // Compact label: position / duration when we know
-        // both — the album cover already identifies the
-        // track, and a live "1:23 / 3:45" gives the user a
-        // scrubber-y readout right in the menu bar. Falls
-        // back to the truncated title for sources that don't
-        // surface position (rare on AppleScript paths).
-        let label: String
+        // Trailing label: position / duration when we know
+        // both. Falls back to nil when the title is already
+        // riding on the leading wing — the artwork (Spotify)
+        // and source-icon-without-artwork paths
+        // (YouTube/SoundCloud/etc.) both put the title on
+        // the left, so the trailing slot stays clean. The
+        // bare title only goes in the trailing slot when we
+        // have NEITHER position nor a leading title slot
+        // (the MediaRemote-only path with no artwork).
+        let label: String?
         if let pos = media.positionSeconds,
            let dur = media.durationSeconds, dur > 0 {
-            label = "\(Self.formatTime(pos)) / \(Self.formatTime(dur))"
+            // Switch to H:MM:SS the moment the content is
+            // an hour or longer — a 1h23m video reads as
+            // `0:22:40 / 1:23:45`, not `22:40 / 83:45`.
+            // Both halves of the readout share the same
+            // format so the divider stays aligned through
+            // the transition (a 59:59 → 1:00:00 jump on
+            // a long video doesn't reshape the pill).
+            let useHours = dur >= 3600
+            label = "\(Self.formatTime(pos, hours: useHours)) / \(Self.formatTime(dur, hours: useHours))"
+        } else if let dur = media.durationSeconds,
+                  dur > 0 {
+            // Position unknown (Chromium browsers without
+            // 'Allow JavaScript from Apple Events' enabled,
+            // YouTube duration fetched via URL scrape, …) —
+            // at least surface the total length so the user
+            // sees something on the right.
+            label = Self.formatTime(dur, hours: dur >= 3600)
+        } else if media.artwork != nil
+                  || Self.titleRendersOnLeading(media) {
+            label = nil
         } else {
             label = Self.truncate(media.title, max: 24)
         }
         let payload = LiveActivityCoordinator.Resolved(
             id: id,
             compactLeadingImage:
-                LiveActivityCoordinator.symbolImage("music.note"),
+                LiveActivityCoordinator.symbolImage(
+                    Self.leadingSymbol(for: media)),
             compactTrailingText: label,
             compactTrailingImage: nil,
             tint: .white,
@@ -201,18 +224,78 @@ final class NowPlayingPublisher: HaloPublisher {
         coordinator?.inject(payload)
     }
 
+    /// SF Symbol that doubles as the source's logo when we
+    /// don't have artwork. Brand-tinted by `pillIconColor` to
+    /// match the source colour the accent line is already
+    /// painting (red for YouTube, orange for SoundCloud, …).
+    private static func leadingSymbol(
+        for media: LiveActivityCoordinator.MediaInfo
+    ) -> String {
+        switch media.source {
+        case "YouTube", "YouTube Music":
+            // Play-in-a-rectangle reads as YouTube once it's
+            // tinted in the source's red.
+            return "play.rectangle.fill"
+        case "SoundCloud":
+            return "cloud.fill"
+        case "Bandcamp":
+            return "music.note.list"
+        case "Twitch":
+            return "tv.fill"
+        case "Vimeo":
+            return "play.rectangle.fill"
+        case "Spotify Web":
+            return "music.note"
+        default:
+            return "music.note"
+        }
+    }
+
+    /// True for sources where NotchView should render the
+    /// track title to the right of the leading icon (mirroring
+    /// the Spotify-with-artwork layout) instead of trailing.
+    /// Keeps the trailing slot reserved for the time read-out.
+    nonisolated static func titleRendersOnLeading(
+        _ media: LiveActivityCoordinator.MediaInfo
+    ) -> Bool {
+        switch media.source {
+        case "YouTube", "YouTube Music",
+             "SoundCloud", "Bandcamp",
+             "Twitch", "Vimeo", "Spotify Web":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func truncate(_ s: String, max: Int) -> String {
         if s.count <= max { return s }
         return s.prefix(max - 1) + "…"
     }
 
-    /// Seconds → "MM:SS". Both fields are zero-padded so the
-    /// label never changes width — "01:23" → "01:24" rolls
-    /// digit-for-digit through `.contentTransition(.numericText())`
-    /// without the pill having to re-flow when the minute
-    /// crosses a one-/two-digit boundary at 9:59 → 10:00.
-    private static func formatTime(_ seconds: Double) -> String {
+    /// Seconds → display string. Two layouts:
+    ///   • `hours = false` → "MM:SS" (zero-padded), used for
+    ///     anything under an hour. Both fields padded so the
+    ///     label never changes width — "01:23" → "01:24"
+    ///     rolls digit-for-digit through
+    ///     `.contentTransition(.numericText())` without the
+    ///     pill having to re-flow when the minute crosses a
+    ///     one-/two-digit boundary at 9:59 → 10:00.
+    ///   • `hours = true` → "H:MM:SS" (hour unpadded, MM+SS
+    ///     padded). Used the moment the content duration
+    ///     hits an hour so the readout never grows minute-
+    ///     beyond-60 ("83:45" looks broken; "1:23:45" reads
+    ///     naturally).
+    private static func formatTime(
+        _ seconds: Double, hours: Bool
+    ) -> String {
         let total = max(0, Int(seconds.rounded()))
+        if hours {
+            let h = total / 3600
+            let m = (total % 3600) / 60
+            let s = total % 60
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
         let m = total / 60
         let s = total % 60
         return String(format: "%02d:%02d", m, s)

@@ -57,6 +57,7 @@ final class NotchHost: NSObject {
         coordinator.start()
         startPublishers()
         installHoverMonitor()
+        observeActivitiesForSizing()
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
@@ -140,6 +141,16 @@ final class NotchHost: NSObject {
             d.start()
             publishers.append(d)
         }
+        // Extensions — opt-in publishers loaded after the
+        // built-ins. Each extension's gating key lives under
+        // `halo.extension.<id>` in UserDefaults and the
+        // Settings → Extensions panel toggles it.
+        if HaloSettings.extensionEnabled("crypto.tracker") {
+            let c = CryptoTrackerExtension(
+                coordinator: coordinator)
+            c.start()
+            publishers.append(c)
+        }
     }
 
     private func stopPublishers() {
@@ -157,17 +168,102 @@ final class NotchHost: NSObject {
         startPublishers()
     }
 
+    // MARK: - Dynamic panel height
+
+    /// Latest SwiftUI-measured expanded-card height,
+    /// propagated up via the NotchView preference-key
+    /// pipeline. When > 0 it overrides the heuristic — the
+    /// panel sizes to exactly what the content actually
+    /// renders, no manual maintenance.
+    private var measuredExpandedHeight: CGFloat = 0
+
+    func applyMeasuredExpandedHeight(_ h: CGFloat) {
+        measuredExpandedHeight = h
+        resizePanelIfNeeded()
+    }
+
+    /// Computed panel height — the compact-row band plus
+    /// either the SwiftUI-measured expanded height (when
+    /// known) OR the heuristic across all active activities
+    /// (when the expanded view isn't currently mounted, so
+    /// we don't have a measurement yet).
+    private func requiredPanelHeight(
+        for layout: NotchLayout
+    ) -> CGFloat {
+        let compact = layout.menuBarHeight + 1
+        let extra: CGFloat
+        if measuredExpandedHeight > 0 {
+            extra = measuredExpandedHeight
+        } else {
+            let activities = coordinator.activities
+            let hasAirpods = activities.contains {
+                $0.id == "halo.airpods"
+            }
+            extra = activities.map {
+                Geometry.expandedExtraHeight(
+                    for: $0, hasAirpods: hasAirpods)
+            }.max() ?? 0
+        }
+        // No buffer — the panel hugs the content exactly.
+        // SwiftUI's spring damping (0.9) is tight enough
+        // that the brief overshoot settles within sub-pixel
+        // bounds, no padding required.
+        return compact + extra
+    }
+
+    /// Re-arm an Observation tracking pass so any change to
+    /// `coordinator.activities` (new payload, priority
+    /// shuffle, expired ttl) re-evaluates the panel size
+    /// and resizes the window if the tallest activity's
+    /// requirement has shifted. Self-rearming because
+    /// withObservationTracking only fires once per call.
+    private func observeActivitiesForSizing() {
+        withObservationTracking { [weak self] in
+            _ = self?.coordinator.activities
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.resizePanelIfNeeded()
+                self?.observeActivitiesForSizing()
+            }
+        }
+    }
+
+    /// Apply a new panel size if `requiredPanelHeight` has
+    /// drifted by more than a few points. Soft resize via
+    /// `setFrame(_:display:animate:)` rather than the full
+    /// rebuildPanel path — the hosting controller stays put,
+    /// only the NSPanel frame changes.
+    private func resizePanelIfNeeded() {
+        guard let panel,
+              let screen = NSScreen.main,
+              var layout = currentLayout
+        else { return }
+        let want = requiredPanelHeight(for: layout)
+        guard abs(want - layout.panelHeight) > 4
+        else { return }
+        layout.panelHeight = want
+        currentLayout = layout
+        let frame = NSRect(
+            x: screen.frame.minX,
+            y: screen.frame.maxY - want,
+            width: screen.frame.width,
+            height: want)
+        panel.setFrame(frame, display: true, animate: false)
+        hostingController?.view.frame = NSRect(
+            origin: .zero, size: frame.size)
+    }
+
     private func rebuildPanel() {
         guard let screen = NSScreen.main else { return }
-        let layout = NotchLayout.resolve(for: screen)
+        var layout = NotchLayout.resolve(for: screen)
+        // Override the static default with the dynamically-
+        // computed height that exactly fits the tallest
+        // currently-active expanded view. Avoids a fixed
+        // 500pt panel — we only claim as much screen space
+        // as the current activities actually need.
+        layout.panelHeight = requiredPanelHeight(
+            for: layout)
 
-        // Panel covers a tall band at the very top of the screen
-        // — the island lives in the top portion, the rest is
-        // transparent room for a future expanded state to grow
-        // downward without resizing the window (which would
-        // jitter z-order). Full screen width so the island can
-        // anchor to the notch wherever it is on multi-monitor
-        // setups.
         let panelRect = NSRect(
             x: screen.frame.minX,
             y: screen.frame.maxY - layout.panelHeight,
@@ -218,6 +314,9 @@ final class NotchHost: NSObject {
             hover: hover,
             onOpenSettings: { [weak self] in
                 self?.openSettings()
+            },
+            onMeasuredHeight: { [weak self] h in
+                self?.applyMeasuredExpandedHeight(h)
             })
 
         if let hc = hostingController {
@@ -340,6 +439,9 @@ struct NotchHostRoot: View {
     /// Callback the in-island gear button + right-click
     /// context menu fire to open the settings drawer.
     let onOpenSettings: () -> Void
+    /// Bubbles the SwiftUI-measured expanded-card height up
+    /// to NotchHost so the NSPanel can resize to fit.
+    let onMeasuredHeight: (CGFloat) -> Void
 
     var body: some View {
         NotchView(
@@ -350,7 +452,8 @@ struct NotchHostRoot: View {
             isExpanded: hover.isExpanded,
             isHovered: hover.isHovered,
             onTap: { coordinator.advanceCycleManually() },
-            onOpenSettings: onOpenSettings)
+            onOpenSettings: onOpenSettings,
+            onMeasuredHeight: onMeasuredHeight)
             // Freeze the slot while the cursor is over the
             // island. The coordinator tears down the ambient
             // rotation timer for the duration and re-arms it
@@ -372,7 +475,12 @@ struct NotchLayout: Equatable {
     let notchTrailingX: CGFloat
     let screenWidth: CGFloat
     let menuBarHeight: CGFloat
-    let panelHeight: CGFloat
+    /// Mutable so NotchHost can recompute and apply a
+    /// dynamic value (sized to the tallest currently-active
+    /// expanded view) before passing the layout into the
+    /// SwiftUI hosting controller. The static factory
+    /// methods seed it with a sensible default.
+    var panelHeight: CGFloat
 
     var notchWidth: CGFloat { notchTrailingX - notchLeadingX }
     var notchCenterX: CGFloat { (notchLeadingX + notchTrailingX) / 2 }
@@ -387,7 +495,12 @@ struct NotchLayout: Equatable {
                 notchTrailingX: rightAux.minX - screen.frame.minX,
                 screenWidth: screenWidth,
                 menuBarHeight: leftAux.height,
-                panelHeight: 200
+                // Baseline that fits a compact-only pill
+                // (no expanded card). NotchHost overrides
+                // this with a dynamically-computed value
+                // sized to the tallest currently-active
+                // expanded view before rendering.
+                panelHeight: 60
             )
         }
         let phantom: CGFloat = 200
@@ -397,7 +510,9 @@ struct NotchLayout: Equatable {
             notchTrailingX: (screenWidth + phantom) / 2,
             screenWidth: screenWidth,
             menuBarHeight: 24,
-            panelHeight: 200
+            // Baseline — NotchHost overrides with a
+            // dynamic value before rendering.
+            panelHeight: 60
         )
     }
 }

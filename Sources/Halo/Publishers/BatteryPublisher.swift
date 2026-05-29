@@ -44,13 +44,14 @@ final class BatteryPublisher: HaloPublisher {
             coordinator?.clear(id: id)
             return
         }
-        // Show only at the salient moments — let the system
-        // battery icon cover the middle of the range. Hovering
-        // any-time access lives on the AirPods / Now Playing
-        // pills, not here.
-        let interesting =
-            info.isCharging || info.percent <= 20 || info.percent >= 99
-        guard interesting else {
+        // Default visibility: ONLY while charging. The macOS
+        // menu-bar battery icon already covers the steady-
+        // state percentage; pulling the user's eye to the
+        // notch every time the battery dips low or finishes
+        // charging is noise. The bolt + percentage pill on
+        // plug-in is the actually-useful moment — that's the
+        // signal a session just changed state.
+        guard info.isCharging else {
             coordinator?.clear(id: id)
             return
         }
