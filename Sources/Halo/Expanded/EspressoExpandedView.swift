@@ -28,7 +28,8 @@ struct EspressoExpandedView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header — current state.
+            // State row — icon + ESPRESSO/value on the left, the
+            // End-session button right-aligned on the SAME row.
             HStack(spacing: 12) {
                 if let img = activity.compactLeadingImage {
                     Image(nsImage: NotchView.tinted(
@@ -51,23 +52,8 @@ struct EspressoExpandedView: View {
                         .monospacedDigit()
                         .contentTransition(.numericText())
                 }
-                Spacer(minLength: 0)
-            }
-            // Action row — extend by N minutes, then End.
-            if isActive {
-                HStack(spacing: 6) {
-                    if !isIndefinite {
-                        ExtendPill(label: "+15m", tint: brand) {
-                            extend(15)
-                        }
-                        ExtendPill(label: "+30m", tint: brand) {
-                            extend(30)
-                        }
-                        ExtendPill(label: "+1h", tint: brand) {
-                            extend(60)
-                        }
-                    }
-                    Spacer(minLength: 0)
+                Spacer(minLength: 8)
+                if isActive {
                     Button(action: end) {
                         HStack(spacing: 4) {
                             Image(systemName: "stop.fill")
@@ -84,6 +70,24 @@ struct EspressoExpandedView: View {
                                       weight: .semibold))
                     }
                     .buttonStyle(.plain)
+                }
+            }
+            // Quick-extend row — only for TIMED sessions (there's
+            // an end date to push out). Indefinite "ON" sessions
+            // have nothing to extend, so the state row is all
+            // that shows.
+            if isActive && !isIndefinite {
+                HStack(spacing: 6) {
+                    ExtendPill(label: "+15m", tint: brand) {
+                        extend(15)
+                    }
+                    ExtendPill(label: "+30m", tint: brand) {
+                        extend(30)
+                    }
+                    ExtendPill(label: "+1h", tint: brand) {
+                        extend(60)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
         }

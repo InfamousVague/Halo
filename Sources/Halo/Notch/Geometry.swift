@@ -265,12 +265,13 @@ enum Geometry {
                 : 0
             content = headerHeight + rowsHeight
         case "espresso":
-            // Header row (~26pt: eyebrow + state) + 8pt gap +
-            // action row (~24pt: extend pills / End button).
-            // Without an explicit case espresso fell to the
-            // generic 30pt, which clipped the End button off
-            // the bottom.
-            content = 26 + 8 + 24
+            // State row (~26pt: eyebrow + value + the End button,
+            // all on one line). Timed sessions add a second row
+            // (~24pt) of quick-extend pills + an 8pt gap;
+            // indefinite "ON" / "OFF" are a single row.
+            let txt = a?.compactTrailingText ?? "OFF"
+            let timed = txt != "OFF" && txt != "ON"
+            content = 26 + (timed ? 8 + 24 : 0)
         default:
             // Generic row: 26pt icon + spacing ≈ 30pt
             content = 30
