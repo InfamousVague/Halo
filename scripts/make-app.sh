@@ -102,6 +102,19 @@ hdiutil create -quiet -volname "Halo" -srcfolder "$STAGE" -ov \
 if security find-identity -v -p codesigning 2>/dev/null \
      | grep -q "$SIGN_IDENTITY"; then
   codesign --force --sign "$SIGN_IDENTITY" "$DMG" || true
-  xcrun stapler staple "$DMG" 2>/dev/null || true
+  # Notarize the DMG ITSELF. The .app inside was notarized above,
+  # but the DMG is a separate artifact with its own hash — it has
+  # to be submitted on its own before it can be stapled. Stapling
+  # without submitting fails with "Record not found" (Error 65)
+  # and ships an un-notarised DMG that trips Gatekeeper on
+  # download. Submit, then staple the ticket.
+  echo "› notarizing $DMG"
+  if xcrun notarytool submit "$DMG" \
+       --keychain-profile "$NOTARY_PROFILE" --wait; then
+    xcrun stapler staple "$DMG"
+    echo "✓ notarized + stapled $DMG"
+  else
+    echo "⚠ DMG notarization skipped/failed — signed but not stapled"
+  fi
 fi
 echo "✓ built $DMG"
